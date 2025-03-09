@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Suika + Pixi.js Demo</title>
+</head>
+<body>
+  <h1>Suika + Pixi</h1>
+  <p id="info">Загрузка...</p>
+  <p id="inviteBox"></p>
+
+  <div>
+    <input type="text" id="wordInput" placeholder="Введите слово (apple, water, fire...)" />
+    <button id="spawnBtn">Спавн по слову</button>
+    <p>
+      Предмет появляется статически, плавно двигается за курсором по X.<br/>
+      Клик мышью — «роняем» (drop).<br/>
+      При столкновении, если есть комбинация, появляется новый предмет.
+    </p>
+  </div>
+
+  <!-- Подключаем Socket.IO -->
+  <script src="/socket.io/socket.io.js"></script>
+  <!-- Подключаем Pixi.js (через CDN) -->
+  <script src="https://pixijs.download/release/pixi.js"></script>
+
+  <!-- Наш клиентский код -->
+  <script type="module" src="client.js"></script>
+</body>
+</html>
