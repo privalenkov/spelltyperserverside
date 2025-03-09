@@ -3,21 +3,65 @@
 <head>
   <meta charset="utf-8" />
   <title>Suika + Pixi.js Demo</title>
+  <style>
+    /* Убираем отступы, растягиваем body/html */
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden; /* чтобы не было скролла */
+      font-family: sans-serif;
+    }
+
+    /* Контейнер для Pixi canvas */
+    #pixi-container {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0; /* Canvas на «заднем плане» */
+    }
+
+    /* UI панель слева, поверх канваса */
+    #gameUI {
+      position: absolute;
+      top: 0; left: 0;
+      width: 250px; /* ширина панели */
+      color: white;
+      padding: 10px;
+      z-index: 10; /* выше канваса */
+      box-sizing: border-box;
+    }
+
+    /* Пример стиля текста/кнопок */
+    #info {
+      margin-bottom: 10px;
+    }
+    #inviteBox {
+      margin-bottom: 10px;
+    }
+  </style>
 </head>
 <body>
-  <h1>Suika + Pixi</h1>
-  <p id="info">Загрузка...</p>
-  <p id="inviteBox"></p>
+  <!-- Панель слева -->
+  <div id="gameUI">
+    <h3>Suika + Pixi</h3>
+    <p id="info">Загрузка...</p>
+    <div id="inviteBox"></div>
 
-  <div>
-    <input type="text" id="wordInput" placeholder="Введите слово (apple, water, fire...)" />
-    <button id="spawnBtn">Спавн по слову</button>
+    <div>
+      <input type="text" id="wordInput" placeholder="Введите слово..." />
+      <button id="spawnBtn">Спавн по слову</button>
+    </div>
+
     <p>
-      Предмет появляется статически, плавно двигается за курсором по X.<br/>
-      Клик мышью — «роняем» (drop).<br/>
-      При столкновении, если есть комбинация, появляется новый предмет.
+      <small>Предмет появляется и двигается за курсором, клик => «роняем».</small>
     </p>
   </div>
+
+  <!-- Контейнер для Pixi (canvas будет внутри) -->
+  <div id="pixi-container"></div>
 
   <!-- Подключаем Socket.IO -->
   <script src="/socket.io/socket.io.js"></script>

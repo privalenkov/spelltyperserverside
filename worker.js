@@ -64,6 +64,8 @@ process.on('message', (msg, connection) => {
 const lobbies = {};
 
 function createLobby() {
+  const simWidth = 800;
+  const simHeight = 600;
   const lobbyId = Math.random().toString(36).slice(2, 7);
 
   // Matter.js
@@ -71,7 +73,7 @@ function createLobby() {
   engine.world.gravity.y = 1;
 
   // Пол
-  const floor = Matter.Bodies.rectangle(400, 600, 800, 50, { isStatic: true });
+  const floor = Matter.Bodies.rectangle(simWidth / 2, simHeight / 2, 400, 50, { isStatic: true });
   Matter.World.add(engine.world, [floor]);
 
   // ~30 FPS
@@ -88,6 +90,10 @@ function createLobby() {
     nextBodyId: 1,
     bodyMap: new Map(),
     itemDataMap: new Map(), // для хранения guid, rarityName и т.д.
+    simWidth,
+    simHeight,
+    floor,
+    owner: null
   };
 
   // Подписка на столкновения
@@ -120,6 +126,28 @@ function sendLobbyState(lobbyId) {
     });
   }
   io.to(lobbyId).emit('stateUpdate', objects);
+}
+
+// Функция сброса игры: удаляем все тела кроме пола и оповещаем игроков
+function resetGame(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  if (!lobby) return;
+  const engine = lobby.engine;
+  const world = engine.world;
+  const toRemove = [];
+  for (const [id, body] of lobby.bodyMap.entries()) {
+    // Оставляем пол
+    if (body !== lobby.floor) {
+      toRemove.push(id);
+      Matter.World.remove(world, body);
+    }
+  }
+  for (const id of toRemove) {
+    lobby.bodyMap.delete(id);
+    lobby.itemDataMap.delete(id);
+  }
+  sendLobbyState(lobbyId);
+  io.to(lobbyId).emit('gameRestarted', { message: 'Новый игрок подключился – игра перезапущена.' });
 }
 
 // Проверяем комбинации при столкновении
@@ -207,9 +235,11 @@ io.on('connection', (socket) => {
   // Если нет ?lobby=..., создаём (isOwner=true)
   socket.on('autoCreateLobby', () => {
     const lobbyId = createLobby();
+    lobbies[lobbyId].owner = socket.id;
     lobbies[lobbyId].players.add(socket.id);
     socket.join(lobbyId);
     socket.emit('lobbyCreated', { lobbyId, isOwner: true });
+    resetGame(lobbyId);
   });
 
   // Если ?lobby=..., join
@@ -227,6 +257,7 @@ io.on('connection', (socket) => {
     socket.join(lobbyId);
     socket.emit('joinedLobby', { lobbyId, isOwner: false });
     io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
+    resetGame(lobbyId);
   });
 
   // Игрок вводит слово -> spawnItem
@@ -284,16 +315,34 @@ io.on('connection', (socket) => {
     Matter.Body.setStatic(body, false);
   });
 
+  // Новый обработчик: получение новых размеров симуляции
+  socket.on('resize', ({ lobbyId, width, height }) => {
+    const lobby = lobbies[lobbyId];
+    if (!lobby) return;
+    lobby.simWidth = width;
+    lobby.simHeight = height;
+    // Перемещаем пол: всегда по центру (width/2, height/2)
+    Matter.Body.setPosition(lobby.floor, { x: width / 2, y: height - 150 });
+  });
+
   // Отключение
   socket.on('disconnect', () => {
     console.log(`[Worker ${process.pid}] Disconnected: ${socket.id}`);
     for (const [id, lobby] of Object.entries(lobbies)) {
       if (lobby.players.has(socket.id)) {
-        lobby.players.delete(socket.id);
-        if (lobby.players.size === 0) {
+        resetGame(id);
+        if (lobby.owner === socket.id) {
+          io.to(id).emit('lobbyClosed', { message: 'Владелец покинул лобби. Лобби закрыто.' });
           clearInterval(lobby.intervalId);
           delete lobbies[id];
-          console.log(`[Worker ${process.pid}] Removed lobby: ${id}`);
+          console.log(`[Worker ${process.pid}] Removed lobby (owner left): ${id}`);
+        } else {
+          lobby.players.delete(socket.id);
+          if (lobby.players.size === 0) {
+            clearInterval(lobby.intervalId);
+            delete lobbies[id];
+            console.log(`[Worker ${process.pid}] Removed lobby: ${id}`);
+          }
         }
       }
     }
