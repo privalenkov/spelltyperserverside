@@ -64,17 +64,11 @@ process.on('message', (msg, connection) => {
 const lobbies = {};
 
 function createLobby() {
-  const simWidth = 800;
-  const simHeight = 600;
   const lobbyId = Math.random().toString(36).slice(2, 7);
 
   // Matter.js
   const engine = Matter.Engine.create();
   engine.world.gravity.y = 1;
-
-  // Пол
-  const floor = Matter.Bodies.rectangle(simWidth / 2, simHeight / 2, 400, 50, { isStatic: true });
-  Matter.World.add(engine.world, [floor]);
 
   // ~30 FPS
   const tickMs = 1000 / 30;
@@ -90,9 +84,11 @@ function createLobby() {
     nextBodyId: 1,
     bodyMap: new Map(),
     itemDataMap: new Map(), // для хранения guid, rarityName и т.д.
-    simWidth,
-    simHeight,
-    floor,
+    simWidth: 800,
+    simHeight: 600,
+    floorSingle: null,
+    floorLeft: null,
+    floorRight: null,
     owner: null
   };
 
@@ -102,6 +98,55 @@ function createLobby() {
   });
 
   return lobbyId;
+}
+
+function placeFloorSingle(lobby) {
+  // Удаляем, если уже были два пола
+  if (lobby.floorLeft) {
+    Matter.World.remove(lobby.engine.world, lobby.floorLeft);
+    lobby.floorLeft = null;
+  }
+  if (lobby.floorRight) {
+    Matter.World.remove(lobby.engine.world, lobby.floorRight);
+    lobby.floorRight = null;
+  }
+  // Создаём floorSingle, если ещё не создан
+  if (!lobby.floorSingle) {
+    const floor = Matter.Bodies.rectangle(
+      lobby.simWidth / 2,
+      lobby.simHeight - 25,
+      400, 50,
+      { isStatic: true }
+    );
+    Matter.World.add(lobby.engine.world, floor);
+    lobby.floorSingle = floor;
+  }
+}
+
+function placeFloorDouble(lobby) {
+  // Удаляем floorSingle
+  if (lobby.floorSingle) {
+    Matter.World.remove(lobby.engine.world, lobby.floorSingle);
+    lobby.floorSingle = null;
+  }
+  // Создаём два пола (left + right), если не созданы
+  if (!lobby.floorLeft && !lobby.floorRight) {
+    const leftFloor = Matter.Bodies.rectangle(
+      lobby.simWidth / 4,
+      lobby.simHeight - 25,
+      400, 50,
+      { isStatic: true }
+    );
+    const rightFloor = Matter.Bodies.rectangle(
+      (3 * lobby.simWidth) / 4,
+      lobby.simHeight - 25,
+      400, 50,
+      { isStatic: true }
+    );
+    Matter.World.add(lobby.engine.world, [leftFloor, rightFloor]);
+    lobby.floorLeft = leftFloor;
+    lobby.floorRight = rightFloor;
+  }
 }
 
 // Отправляем текущее состояние (координаты) всем в лобби
@@ -122,7 +167,8 @@ function sendLobbyState(lobbyId) {
       label: body.label || '',
       sprite: data?.sprite,        // <-- Добавляем
       word: data?.word,           // <-- при желании
-      rarityName: data?.rarityName // <-- при желании
+      rarityName: data?.rarityName, // <-- при желании
+      angle: body.angle
     });
   }
   io.to(lobbyId).emit('stateUpdate', objects);
@@ -132,22 +178,24 @@ function sendLobbyState(lobbyId) {
 function resetGame(lobbyId) {
   const lobby = lobbies[lobbyId];
   if (!lobby) return;
-  const engine = lobby.engine;
-  const world = engine.world;
+  const world = lobby.engine.world;
+
   const toRemove = [];
   for (const [id, body] of lobby.bodyMap.entries()) {
-    // Оставляем пол
-    if (body !== lobby.floor) {
+    // Не удаляем ни floorSingle, ни floorLeft/right
+    if (body !== lobby.floorSingle && body !== lobby.floorLeft && body !== lobby.floorRight) {
       toRemove.push(id);
       Matter.World.remove(world, body);
     }
   }
+
   for (const id of toRemove) {
     lobby.bodyMap.delete(id);
     lobby.itemDataMap.delete(id);
   }
+
   sendLobbyState(lobbyId);
-  io.to(lobbyId).emit('gameRestarted', { message: 'Новый игрок подключился – игра перезапущена.' });
+  io.to(lobbyId).emit('gameRestarted', { message: 'Игровое поле очищено.' });
 }
 
 // Проверяем комбинации при столкновении
@@ -228,6 +276,10 @@ function getBodyId(lobby, body) {
   return null;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 /** === События Socket.IO === */
 io.on('connection', (socket) => {
   console.log(`[Worker ${process.pid}] Connection: ${socket.id}`);
@@ -235,10 +287,15 @@ io.on('connection', (socket) => {
   // Если нет ?lobby=..., создаём (isOwner=true)
   socket.on('autoCreateLobby', () => {
     const lobbyId = createLobby();
-    lobbies[lobbyId].owner = socket.id;
-    lobbies[lobbyId].players.add(socket.id);
+    const lobby = lobbies[lobbyId];
+    lobby.owner = socket.id;
+    lobby.players.add(socket.id);
     socket.join(lobbyId);
     socket.emit('lobbyCreated', { lobbyId, isOwner: true });
+
+    // Ставим floorSingle (один игрок пока)
+    placeFloorSingle(lobby);
+
     resetGame(lobbyId);
   });
 
@@ -257,6 +314,10 @@ io.on('connection', (socket) => {
     socket.join(lobbyId);
     socket.emit('joinedLobby', { lobbyId, isOwner: false });
     io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
+
+    // Теперь у нас 2 игрока => два пола
+    placeFloorDouble(lobby);
+
     resetGame(lobbyId);
   });
 
@@ -272,8 +333,24 @@ io.on('connection', (socket) => {
     }
     const rarity = mockDatabase.rarity_points.find(r => r.id === found.rarityId);
 
+    const isOwner = (socket.id === lobby.owner);
+
+    // Вычисляем X в зависимости от числа игроков и кто мы
+    let spawnX = lobby.simWidth / 2; // по умолчанию (один игрок)
+    if (lobby.players.size === 2) {
+      if (isOwner) {
+        // владелец → левая половина
+        spawnX = lobby.simWidth / 4;
+      } else {
+        // второй игрок → правая половина
+        spawnX = (3 * lobby.simWidth) / 4;
+      }
+    }
+
+    const spawnY = 100;
+
     // Создаем статический body (превью)
-    const body = Matter.Bodies.circle(400, 100, 20, {
+    const body = Matter.Bodies.circle(spawnX, spawnY, 20, {
       label: found.word || 'unnamed'
     });
     Matter.Body.setStatic(body, true);
@@ -293,7 +370,9 @@ io.on('connection', (socket) => {
       itemId: newId,
       word: found.word,
       rarityName: rarity?.name,
-      sprite: found.sprite
+      sprite: found.sprite,
+      owner: isOwner,
+      playerCount: lobby.players.size,
     });
   });
 
@@ -303,6 +382,61 @@ io.on('connection', (socket) => {
     if (!lobby) return;
     const body = lobby.bodyMap.get(itemId);
     if (!body) return;
+    
+    const isOwner = (socket.id === lobby.owner);
+    const itemSide = (body.position.x < (lobby.simWidth / 2)) ? 'left' : 'right';
+    // Сторона игрока, пытающегося двигать:
+    const playerSide = isOwner ? 'left' : 'right';
+  
+    if (lobby.players.size === 2) {
+      // Если 2 игрока, не разрешаем двигать, если стороны не совпадают
+      if (itemSide !== playerSide) {
+        // Игнорируем (не даём двигать)
+        return;
+      }
+    }
+
+    if (lobby.players.size === 1) {
+      // ОДИН ПОЛ: lobby.floorSingle
+      if (lobby.floorSingle) {
+        const floorCenterX = lobby.floorSingle.position.x;
+        const floorWidth = 400; // ваш размер пола
+        const halfWidth = floorWidth / 2;
+        
+        const leftBound = floorCenterX - halfWidth;
+        const rightBound = floorCenterX + halfWidth;
+  
+        x = clamp(x, leftBound, rightBound);
+      }
+    
+    } else if (lobby.players.size === 2) {
+      // ДВА ПОЛА: lobby.floorLeft, lobby.floorRight
+      // Нужно определить, какой из половин предмет движется:
+      // Например, если «левый» игрок => floorLeft, если «правый» => floorRight
+      // Или определяете side по x-текущему
+      const isOwner = (socket.id === lobby.owner);
+      if (isOwner) {
+        // «Left floor»
+        const floorCenterX = lobby.floorLeft.position.x;
+        const floorWidth = 400;
+        const halfWidth = floorWidth / 2;
+  
+        const leftBound = floorCenterX - halfWidth;
+        const rightBound = floorCenterX + halfWidth;
+        x = clamp(x, leftBound, rightBound);
+  
+      } else {
+        // «Right floor»
+        const floorCenterX = lobby.floorRight.position.x;
+        const floorWidth = 400;
+        const halfWidth = floorWidth / 2;
+  
+        const leftBound = floorCenterX - halfWidth;
+        const rightBound = floorCenterX + halfWidth;
+        x = clamp(x, leftBound, rightBound);
+      }
+    }
+
     Matter.Body.setPosition(body, { x, y: body.position.y });
   });
 
@@ -319,10 +453,38 @@ io.on('connection', (socket) => {
   socket.on('resize', ({ lobbyId, width, height }) => {
     const lobby = lobbies[lobbyId];
     if (!lobby) return;
+  
     lobby.simWidth = width;
     lobby.simHeight = height;
-    // Перемещаем пол: всегда по центру (width/2, height/2)
-    Matter.Body.setPosition(lobby.floor, { x: width / 2, y: height - 150 });
+  
+    // Смотрим, сколько игроков
+    const playerCount = lobby.players.size;
+  
+    if (playerCount === 1) {
+      // Один игрок => placeFloorSingle
+      placeFloorSingle(lobby);
+      // Обновляем координаты floorSingle
+      if (lobby.floorSingle) {
+        Matter.Body.setPosition(lobby.floorSingle, {
+          x: width / 2,
+          y: height - 25 // или height - 25, как вам нужно
+        });
+      }
+    } else if (playerCount === 2) {
+      // Два игрока => placeFloorDouble
+      placeFloorDouble(lobby);
+      // Обновляем координаты для leftFloor, rightFloor
+      if (lobby.floorLeft && lobby.floorRight) {
+        Matter.Body.setPosition(lobby.floorLeft, {
+          x: width / 4,
+          y: height - 25
+        });
+        Matter.Body.setPosition(lobby.floorRight, {
+          x: (3 * width) / 4,
+          y: height - 25
+        });
+      }
+    }
   });
 
   // Отключение
@@ -338,7 +500,10 @@ io.on('connection', (socket) => {
           console.log(`[Worker ${process.pid}] Removed lobby (owner left): ${id}`);
         } else {
           lobby.players.delete(socket.id);
-          if (lobby.players.size === 0) {
+          if (lobby.players.size === 1) {
+            placeFloorSingle(lobby);
+            resetGame(id);
+          } else if (lobby.players.size === 0) {
             clearInterval(lobby.intervalId);
             delete lobbies[id];
             console.log(`[Worker ${process.pid}] Removed lobby: ${id}`);

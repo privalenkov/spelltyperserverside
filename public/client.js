@@ -80,6 +80,9 @@ socket.on('lobbyCreated', ({ lobbyId, isOwner }) => {
     inviteBox.innerHTML = `<p>Ссылка для друга: <a href="${link}">${link}</a></p>`;
   }
 
+  mouseX = window.innerWidth / 2;
+  localPreviewX = window.innerWidth / 2;
+
   setTimeout(() => {
     socket.emit('resize', { lobbyId, width: window.innerWidth, height: window.innerHeight });
   }, 100);
@@ -91,8 +94,14 @@ socket.on('joinedLobby', ({ lobbyId, isOwner }) => {
   if (isOwner) {
     const link = `${window.location.origin}?lobby=${lobbyId}`;
     inviteBox.innerHTML = `<p>Ссылка для приглашения: <a href="${link}">${link}</a></p>`;
+    document.getElementById('gameUI').classList.add('leftSide');
+    mouseX = window.innerWidth / 4;
+    localPreviewX = window.innerWidth / 4;
   } else {
     inviteBox.innerHTML = '';
+    document.getElementById('gameUI').classList.add('rightSide');
+    mouseX = (3 * window.innerWidth) / 4;
+    localPreviewX = (3 * window.innerWidth) / 4;
   }
 });
 
@@ -107,11 +116,22 @@ socket.on('playerJoined', ({ playerId }) => { console.log('Другой игро
 
 socket.on('spawnError', ({ message }) => { alert('spawnError: ' + message); });
 
-socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite }) => {
+socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playerCount }) => {
   console.log('itemSpawned:', itemId, word, sprite);
   currentPreviewItemId = itemId;
-  localPreviewX = 400;
-  mouseX = 400;
+
+  mouseX = window.innerWidth / 2;
+  localPreviewX = window.innerWidth / 2; // по умолчанию (один игрок)
+  if (playerCount === 2) {
+    if (owner) {
+      mouseX = window.innerWidth / 4;
+      localPreviewX = window.innerWidth / 4;
+    } else {
+      mouseX = (3 * window.innerWidth) / 4;
+      localPreviewX = (3 * window.innerWidth) / 4;
+    }
+  }
+
   startMouseFollow();
 });
 
@@ -153,6 +173,7 @@ socket.on('stateUpdate', async (objects) => {
           // Сразу ставим координаты (на всякий случай)
           sp.x = obj.x;
           sp.y = obj.y;
+          sp.rotation = obj.angle || 0;
 
           // Добавляем на сцену
           app.stage.addChild(sp);
@@ -175,6 +196,7 @@ socket.on('stateUpdate', async (objects) => {
       if (!record.loading && record.sprite) {
         record.sprite.x = obj.x;
         record.sprite.y = obj.y;
+        record.sprite.rotation = obj.angle || 0
       }
       // Если loading=true, значит мы ещё грузимся,
       // тогда пока ничего не делаем — спрайт появится, когда загрузка завершится
@@ -192,7 +214,7 @@ socket.on('stateUpdate', async (objects) => {
       delete itemSprites[idStr];
     }
   }
-});  
+});
 
 socket.on('itemCombined', async ({ oldA, oldB, newId, newWord, newRarity, sprite }) => {
     console.log('itemCombined:', oldA, oldB, '->', newId, newWord, sprite);
