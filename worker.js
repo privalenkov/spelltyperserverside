@@ -263,6 +263,53 @@ function handleCollisions(lobbyId, event) {
             newRarity: rarity?.name,
             sprite: resultWord.sprite
           });
+
+          // ========== Подсчёт очков ==========
+          // Найдём rarity для itemA, itemB
+          const rarityA = mockDatabase.rarity_points.find(r => r.id === itemA.rarityId);
+          const rarityB = mockDatabase.rarity_points.find(r => r.id === itemB.rarityId);
+
+          const pointsA = rarityA?.value || 0;
+          const pointsB = rarityB?.value || 0;
+          const totalPoints = pointsA + pointsB;
+
+          // Определяем, кому засчитывать
+          let scoringSocketId;
+          if (lobby.players.size === 1) {
+            // одиночная игра => единственному игроку
+            // (у нас lobby.scores с одним ключом)
+            scoringSocketId = [...lobby.players][0]; // берем единственного игрока
+          } else if (lobby.players.size === 2) {
+            // два игрока => смотрим, где центр столкновения
+            // пусть centerX = (bodyA.x + bodyB.x)/2
+            const centerX = (bodyA.position.x + bodyB.position.x)/2;
+            if (centerX < (lobby.simWidth / 2)) {
+              // левая половина => owner
+              scoringSocketId = lobby.owner;
+            } else {
+              // правая половина => другой игрок
+              scoringSocketId = [...lobby.players].find(id => id !== lobby.owner);
+            }
+          }
+
+          // Прибавляем очки
+          if (scoringSocketId && lobby.scores[scoringSocketId] != null) {
+            lobby.scores[scoringSocketId] += totalPoints;
+          }
+
+          // Теперь сообщаем всем в лобби о новых очках
+          // Чтобы каждый видел и свои, и чужие
+          // Сделаем объект scoresForAll: { socketId1: number, socketId2: number }
+          const scoresForAll = {};
+          for (const pid of lobby.players) {
+            scoresForAll[pid] = lobby.scores[pid] || 0;
+          }
+
+          io.to(lobbyId).emit('scoreUpdated', {
+            scoringPlayer: scoringSocketId || null,
+            pointsGained: totalPoints,
+            scores: scoresForAll  // все очки
+          });
         }
       }
     }
@@ -290,6 +337,8 @@ io.on('connection', (socket) => {
     const lobby = lobbies[lobbyId];
     lobby.owner = socket.id;
     lobby.players.add(socket.id);
+    lobby.scores = {};            // <-- инициализируем
+    lobby.scores[socket.id] = 0;
     socket.join(lobbyId);
     socket.emit('lobbyCreated', { lobbyId, isOwner: true });
 
@@ -311,6 +360,12 @@ io.on('connection', (socket) => {
       return;
     }
     lobby.players.add(socket.id);
+    if (!lobby.scores) {
+      lobby.scores = {};
+      lobby.scores[lobby.owner] = 0;
+    }
+    lobby.scores[socket.id] = 0;
+
     socket.join(lobbyId);
     socket.emit('joinedLobby', { lobbyId, isOwner: false });
     io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
@@ -361,6 +416,7 @@ io.on('connection', (socket) => {
     lobby.itemDataMap.set(newId, {
       guid: found.guid,
       word: found.word,
+      rarityId: found.rarityId,
       rarityName: rarity?.name || 'unknown',
       sprite: found.sprite,
       combinationGuids: found.combinationGuids

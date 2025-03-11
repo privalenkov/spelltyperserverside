@@ -220,6 +220,15 @@ socket.on('itemCombined', async ({ oldA, oldB, newId, newWord, newRarity, sprite
     console.log('itemCombined:', oldA, oldB, '->', newId, newWord, sprite);
 });
 
+socket.on('scoreUpdated', ({ scoringPlayer, pointsGained, scores }) => {
+  // "scores" содержит очки всех игроков
+  // "scoringPlayer" — кто получил pointsGained
+  console.log('scoreUpdated:', scoringPlayer, pointsGained, scores);
+
+  // Отрисуйте/обновите UI, например:
+  // updateScoreUI(scores, scoringPlayer, pointsGained);
+});
+
 // === Плавное движение (preview) ===
 function startMouseFollow() {
   mouseMoveActive = true;
