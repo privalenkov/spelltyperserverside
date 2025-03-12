@@ -763,6 +763,13 @@ io.on('connection', (socket) => {
       socket.emit('spawnError', { message: 'Слово не найдено' });
       return;
     }
+
+    // Проверяем, есть ли уже у этого игрока предмет с таким guid
+    // Проходим itemDataMap, ищем item где item.ownerId === socket.id и item.guid === found.guid
+    for (const [id, itemData] of lobby.itemDataMap.entries()) {
+      if (itemData.ownerId === socket.id && itemData.guid === found.guid) return;
+    }
+
     const rarity = mockDatabase.rarity_points.find(r => r.id === found.rarityId);
 
     const isOwner = (socket.id === lobby.owner);
@@ -796,7 +803,8 @@ io.on('connection', (socket) => {
       rarityId: found.rarityId,
       rarityName: rarity?.name || 'unknown',
       sprite: found.sprite,
-      combinationGuids: found.combinationGuids
+      combinationGuids: found.combinationGuids,
+      ownerId: socket.id,
     });
 
     socket.emit('itemSpawned', {

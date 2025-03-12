@@ -264,17 +264,18 @@ socket.on('gameOver', (data) => {
   gameOverHappened = true;
   startLocalSlowMotion(() => {
     removeItemsOneByOne(() => {
-      if (data?.winnerId !== socket.id) return;
-      console.log(data.finalScore, isTopFive(data.finalScore))
-      if (!isTopFive(data.finalScore)) return;
-      const nickname = prompt('Поздравляю, вы установили новый рекорд! Введите ваш ник, чтобы сохранить его на доске почета');
-      if (nickname && nickname.trim() !== '') {
-        // Отправляем на сервер
-        console.log('to server', nickname, currentLobbyId)
-        socket.emit('submitNickname', { lobbyId: currentLobbyId, nickname });
-      } else {
-        console.log('Ник не введён. Рекорд не сохранён.');
-      }
+      if (data?.winnerId === socket.id) {
+        if (isTopFive(data.finalScore)) {
+          const nickname = prompt('Поздравляю, вы установили новый рекорд! Введите ваш ник, чтобы сохранить его на доске почета');
+          if (nickname && nickname.trim() !== '') {
+            // Отправляем на сервер
+            console.log('to server', nickname, currentLobbyId)
+            socket.emit('submitNickname', { lobbyId: currentLobbyId, nickname });
+            window.location.href = '/';
+          }
+        }
+      };
+      window.location.href = '/';
     });
   });
 });
