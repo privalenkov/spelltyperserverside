@@ -74,6 +74,7 @@ function createLobby() {
   const tickMs = 1000 / 30;
   const intervalId = setInterval(() => {
     Matter.Engine.update(engine, tickMs);
+    checkOutOfBox(lobbyId);
     sendLobbyState(lobbyId);
   }, tickMs);
 
@@ -86,10 +87,11 @@ function createLobby() {
     itemDataMap: new Map(), // для хранения guid, rarityName и т.д.
     simWidth: 800,
     simHeight: 600,
-    floorSingle: null,
-    floorLeft: null,
-    floorRight: null,
-    owner: null
+    boxSingleWalls: null,
+    boxLeftWalls: null,
+    boxRightWalls: null,
+    owner: null,
+    gameOver: false,
   };
 
   // Подписка на столкновения
@@ -100,54 +102,305 @@ function createLobby() {
   return lobbyId;
 }
 
-function placeFloorSingle(lobby) {
-  // Удаляем, если уже были два пола
-  if (lobby.floorLeft) {
-    Matter.World.remove(lobby.engine.world, lobby.floorLeft);
-    lobby.floorLeft = null;
-  }
-  if (lobby.floorRight) {
-    Matter.World.remove(lobby.engine.world, lobby.floorRight);
-    lobby.floorRight = null;
-  }
-  // Создаём floorSingle, если ещё не создан
-  if (!lobby.floorSingle) {
-    const floor = Matter.Bodies.rectangle(
-      lobby.simWidth / 2,
-      lobby.simHeight - 25,
-      400, 50,
-      { isStatic: true }
-    );
-    Matter.World.add(lobby.engine.world, floor);
-    lobby.floorSingle = floor;
+// Функция проверяет все предметы
+function checkOutOfBox(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  if (!lobby || lobby.gameOver) return; 
+
+  if (lobby.players.size === 1 && lobby.boxSingleWalls) {
+    checkOutOfBoxSingle(lobbyId);
+  } else if (lobby.players.size === 2 && lobby.boxLeftWalls && lobby.boxRightWalls) {
+    checkOutOfBoxDouble(lobbyId);
   }
 }
 
-function placeFloorDouble(lobby) {
-  // Удаляем floorSingle
-  if (lobby.floorSingle) {
-    Matter.World.remove(lobby.engine.world, lobby.floorSingle);
-    lobby.floorSingle = null;
-  }
-  // Создаём два пола (left + right), если не созданы
-  if (!lobby.floorLeft && !lobby.floorRight) {
-    const leftFloor = Matter.Bodies.rectangle(
-      lobby.simWidth / 4,
-      lobby.simHeight - 25,
-      400, 50,
-      { isStatic: true }
-    );
-    const rightFloor = Matter.Bodies.rectangle(
-      (3 * lobby.simWidth) / 4,
-      lobby.simHeight - 25,
-      400, 50,
-      { isStatic: true }
-    );
-    Matter.World.add(lobby.engine.world, [leftFloor, rightFloor]);
-    lobby.floorLeft = leftFloor;
-    lobby.floorRight = rightFloor;
+function checkOutOfBoxSingle(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  const [floor, leftWall, rightWall] = lobby.boxSingleWalls;
+  // Высота стен = 100 => half=50
+  const wallCenterY = leftWall.position.y;  // (или rightWall, они одинаковые)
+  const topOfBox    = wallCenterY - 50;     // верх стен
+
+  // Толщина стены=20 => halfWall=10
+  const halfWallThick = 10;
+  const leftX  = leftWall.position.x  + halfWallThick;
+  const rightX = rightWall.position.x - halfWallThick;
+
+  for (const [id, body] of lobby.bodyMap.entries()) {
+    if (body===floor || body===leftWall || body===rightWall) continue;
+    if (body.isStatic) continue; // Не брошен => не проверяем
+
+    const minX = body.bounds.min.x;
+    const maxX = body.bounds.max.x;
+    const minY = body.bounds.min.y;
+
+    // A) Предмет «ниже» верха коробки? => minY> topOfBox
+    const belowTop = (minY > topOfBox);
+
+    // B) Полностью вышел за левую: maxX < leftX
+    //    или за правую: minX > rightX
+    const outLeft  = (maxX < leftX);
+    const outRight = (minX > rightX);
+
+    if (belowTop && (outLeft || outRight)) {
+      lobby.gameOver = true;
+      const playerId = [...lobby.players][0];
+      endGameSingle(lobbyId, playerId);
+      return;
+    }
   }
 }
+
+function checkOutOfBoxDouble(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  // Извлекаем тела левой коробки
+  const [lfloor, lwall1, lwall2] = lobby.boxLeftWalls;
+  // Высота пола = 20 => верх = y - 10
+  const leftFloorHeight = 20;
+  const topOfLeftFloor  = lfloor.position.y - (leftFloorHeight/2);
+
+  // Стенки левой коробки толщина=20 => half=10
+  const halfWallThick = 10;
+  const leftBoxLeftX  = lwall1.position.x + halfWallThick; // внутренняя граница
+  const leftBoxRightX = lwall2.position.x - halfWallThick;
+
+  // То же для правой
+  const [rfloor, rwall1, rwall2] = lobby.boxRightWalls;
+  const rightFloorHeight = 20;
+  const topOfRightFloor  = rfloor.position.y - (rightFloorHeight/2);
+
+  const rightBoxLeftX  = rwall1.position.x + halfWallThick;
+  const rightBoxRightX = rwall2.position.x - halfWallThick;
+
+  // Теперь обходим все тела
+  for (const [id, body] of lobby.bodyMap.entries()) {
+    // Пропускаем сами стены
+    if (
+      body === lfloor || body===lwall1 || body===lwall2 ||
+      body === rfloor || body===rwall1 || body===rwall2
+    ) continue;
+    // Пропускаем статик (неброшенные)
+    if (body.isStatic) continue;
+
+    const minX = body.bounds.min.x;
+    const maxX = body.bounds.max.x;
+    const minY = body.bounds.min.y;
+
+    // Определим, «левая» это коробка или «правая»
+    // Простейший способ: если center.x < (lobby.simWidth/2) => предмет "левой" коробки,
+    // иначе — правой.
+    const centerX = (minX + maxX) / 2;
+    const halfWidth = (lobby.simWidth / 2);
+
+    if (centerX < halfWidth) {
+      // ЛЕВАЯ коробка
+      // А) Ниже верха левого пола?
+      const belowLeftFloorTop = (minY > topOfLeftFloor);
+      // Б) Полностью вышел за левую: (maxX < leftBoxLeftX) 
+      //    или за правую: (minX > leftBoxRightX)
+      const outLeft  = (maxX < leftBoxLeftX);
+      const outRight = (minX > leftBoxRightX);
+
+      if (belowLeftFloorTop && (outLeft || outRight)) {
+        // Левый игрок (owner) проиграл
+        lobby.gameOver = true;
+        endGameMultiplayer(lobbyId, 'left');
+        return;
+      }
+
+    } else {
+      // ПРАВАЯ коробка
+      const belowRightFloorTop = (minY > topOfRightFloor);
+      const outLeft  = (maxX < rightBoxLeftX);
+      const outRight = (minX > rightBoxRightX);
+
+      if (belowRightFloorTop && (outLeft || outRight)) {
+        // Правый игрок проиграл
+        lobby.gameOver = true;
+        endGameMultiplayer(lobbyId, 'right');
+        return;
+      }
+    }
+  }
+}
+
+
+function endGameSingle(lobbyId, playerId) {
+  console.log(lobbyId, playerId)
+  const lobby = lobbies[lobbyId];
+  if (!lobby) return;
+  
+  // Допустим, выводим очки
+  const finalScore = lobby.scores[playerId] || 0;
+  
+  io.to(lobbyId).emit('gameOver', {
+    finalScore,
+    message: `Игра окончена. Ваши очки: ${finalScore}`
+  });
+
+  // Можем разорвать лобби/очистить
+  // ...
+}
+
+function endGameMultiplayer(lobbyId, sideLost) {
+  const lobby = lobbies[lobbyId];
+  console.log(sideLost);
+  if (!lobby) return;
+
+  // Определяем: если sideLost==='left' => owner проиграл. Иначе выиграл.
+  let winnerId, loserId;
+  if (sideLost==='left') {
+    loserId = lobby.owner;
+    winnerId= [...lobby.players].find(id=> id!==lobby.owner);
+  } else {
+    winnerId= lobby.owner;
+    loserId = [...lobby.players].find(id=> id!==lobby.owner);
+  }
+
+  const winnerScore= lobby.scores[winnerId] || 0;
+  const loserScore = lobby.scores[loserId]  || 0;
+
+  console.log(winnerScore, loserScore);
+
+  io.to(lobbyId).emit('gameOver', {
+    winnerId,
+    loserId,
+    winnerScore,
+    loserScore,
+    message: `Игрок ${winnerId} победил! (${winnerScore} очков)`
+  });
+
+  // Скажем, дальше можно удалить лобби
+  // ...
+}
+
+
+function placeBoxSingle(lobby) {
+  const world = lobby.engine.world;
+
+  // Удаляем, если были "двойные" ящики
+  if (lobby.boxLeftWalls) {
+    // значит у нас double-box
+    for (const body of lobby.boxLeftWalls) {
+      Matter.World.remove(world, body);
+    }
+    lobby.boxLeftWalls = null;
+  }
+  if (lobby.boxRightWalls) {
+    for (const body of lobby.boxRightWalls) {
+      Matter.World.remove(world, body);
+    }
+    lobby.boxRightWalls = null;
+  }
+
+  // Если ещё нет boxSingle
+  if (!lobby.boxSingleWalls) {
+    // Допустим ширина = 400, невысокие стенки (100px)
+    // И floor стоит на Y = simHeight - 25
+    const floorY = lobby.simHeight - 25;
+    const centerX = lobby.simWidth / 2;
+    const halfWidth = 400 / 2; // =200
+
+    // Пол
+    const floor = Matter.Bodies.rectangle(
+      centerX,
+      floorY,
+      400, // width
+      20,  // толщина
+      { isStatic: true }
+    );
+    // Левая стенка
+    const leftWall = Matter.Bodies.rectangle(
+      centerX - halfWidth, // X = left edge
+      floorY - 50,         // небольшая высота, половина 100
+      20, // толщину стенки
+      100, // высота
+      { isStatic: true }
+    );
+    // Правая стенка
+    const rightWall = Matter.Bodies.rectangle(
+      centerX + halfWidth,
+      floorY - 50,
+      20,
+      100,
+      { isStatic: true }
+    );
+
+    Matter.World.add(world, [floor, leftWall, rightWall]);
+
+    // Сохраняем их в массив, чтобы потом удобно удалять при reset
+    lobby.boxSingleWalls = [floor, leftWall, rightWall];
+  }
+}
+
+function placeBoxDouble(lobby) {
+  const world = lobby.engine.world;
+
+  // Удаляем single
+  if (lobby.boxSingleWalls) {
+    for (const body of lobby.boxSingleWalls) {
+      Matter.World.remove(world, body);
+    }
+    lobby.boxSingleWalls = null;
+  }
+
+  // Если ещё нет leftWalls/rightWalls
+  if (!lobby.boxLeftWalls && !lobby.boxRightWalls) {
+    // Левая "коробка" (floor + 2 стенки)
+    // Допустим ширина = 400, floorY = simHeight - 25
+    const floorY = lobby.simHeight - 25;
+    const leftCenterX = lobby.simWidth / 4;   // (width/4)
+    const halfWidth = 200; // (400/2)
+
+    const leftFloor = Matter.Bodies.rectangle(
+      leftCenterX,
+      floorY,
+      400, 20,
+      { isStatic: true }
+    );
+    const leftWall = Matter.Bodies.rectangle(
+      leftCenterX - halfWidth,
+      floorY - 50,
+      20, 100,
+      { isStatic: true }
+    );
+    const rightWall = Matter.Bodies.rectangle(
+      leftCenterX + halfWidth,
+      floorY - 50,
+      20, 100,
+      { isStatic: true }
+    );
+    const leftBox = [leftFloor, leftWall, rightWall];
+    Matter.World.add(world, leftBox);
+
+    // Правая "коробка"
+    const rightCenterX = (3 * lobby.simWidth) / 4;
+    const rightFloor = Matter.Bodies.rectangle(
+      rightCenterX,
+      floorY,
+      400, 20,
+      { isStatic: true }
+    );
+    const rightWallL = Matter.Bodies.rectangle(
+      rightCenterX - halfWidth,
+      floorY - 50,
+      20, 100,
+      { isStatic: true }
+    );
+    const rightWallR = Matter.Bodies.rectangle(
+      rightCenterX + halfWidth,
+      floorY - 50,
+      20, 100,
+      { isStatic: true }
+    );
+    const rightBox = [rightFloor, rightWallL, rightWallR];
+    Matter.World.add(world, rightBox);
+
+    lobby.boxLeftWalls = leftBox;
+    lobby.boxRightWalls= rightBox;
+  }
+}
+
 
 // Отправляем текущее состояние (координаты) всем в лобби
 function sendLobbyState(lobbyId) {
@@ -178,25 +431,54 @@ function sendLobbyState(lobbyId) {
 function resetGame(lobbyId) {
   const lobby = lobbies[lobbyId];
   if (!lobby) return;
-  const world = lobby.engine.world;
 
+  // Сбрасываем флаг gameOver, 
+  // чтобы снова можно было проверять падения
+  lobby.gameOver = false;
+
+  // Удаляем все тела, кроме пола(ов) / стен(ок)
+  const world = lobby.engine.world;
   const toRemove = [];
-  for (const [id, body] of lobby.bodyMap.entries()) {
-    // Не удаляем ни floorSingle, ни floorLeft/right
-    if (body !== lobby.floorSingle && body !== lobby.floorLeft && body !== lobby.floorRight) {
-      toRemove.push(id);
-      Matter.World.remove(world, body);
+
+  // Допустим, если вы используете "boxSingleWalls" или "boxLeftWalls"/"boxRightWalls"
+  // — в любом случае, не удаляйте их
+  if (lobby.boxSingleWalls) {
+    for (const [id, body] of lobby.bodyMap.entries()) {
+      if (!lobby.boxSingleWalls.includes(body)) {
+        toRemove.push(id);
+      }
+    }
+  } else if (lobby.boxLeftWalls && lobby.boxRightWalls) {
+    for (const [id, body] of lobby.bodyMap.entries()) {
+      if (
+        !lobby.boxLeftWalls.includes(body) &&
+        !lobby.boxRightWalls.includes(body)
+      ) {
+        toRemove.push(id);
+      }
     }
   }
 
+  // Убираем тела из мира и чистим из bodyMap/itemDataMap
   for (const id of toRemove) {
+    const body = lobby.bodyMap.get(id);
+    Matter.World.remove(world, body);
     lobby.bodyMap.delete(id);
     lobby.itemDataMap.delete(id);
   }
 
+  // (Опционально) сбрасываем счёт
+  if (lobby.scores) {
+    for (const pid of lobby.players) {
+      lobby.scores[pid] = 0;
+    }
+  }
+
+  // Отправляем новое состояние
   sendLobbyState(lobbyId);
-  io.to(lobbyId).emit('gameRestarted', { message: 'Игровое поле очищено.' });
+  io.to(lobbyId).emit('gameRestarted', { message: 'Игра началась заново!' });
 }
+
 
 // Проверяем комбинации при столкновении
 function handleCollisions(lobbyId, event) {
@@ -342,8 +624,8 @@ io.on('connection', (socket) => {
     socket.join(lobbyId);
     socket.emit('lobbyCreated', { lobbyId, isOwner: true });
 
-    // Ставим floorSingle (один игрок пока)
-    placeFloorSingle(lobby);
+    // Ставим boxSingleWalls (один игрок пока)
+    placeBoxSingle(lobby);
 
     resetGame(lobbyId);
   });
@@ -371,7 +653,7 @@ io.on('connection', (socket) => {
     io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
 
     // Теперь у нас 2 игрока => два пола
-    placeFloorDouble(lobby);
+    placeBoxDouble(lobby);
 
     resetGame(lobbyId);
   });
@@ -453,9 +735,9 @@ io.on('connection', (socket) => {
     }
 
     if (lobby.players.size === 1) {
-      // ОДИН ПОЛ: lobby.floorSingle
-      if (lobby.floorSingle) {
-        const floorCenterX = lobby.floorSingle.position.x;
+      if (lobby.boxSingleWalls) {
+        const [floor, leftW, rightW] = lobby.boxSingleWalls;
+        const floorCenterX = floor.position.x;
         const floorWidth = 400; // ваш размер пола
         const halfWidth = floorWidth / 2;
         
@@ -473,7 +755,8 @@ io.on('connection', (socket) => {
       const isOwner = (socket.id === lobby.owner);
       if (isOwner) {
         // «Left floor»
-        const floorCenterX = lobby.floorLeft.position.x;
+        const [floor, leftW, rightW] = lobby.boxLeftWalls;
+        const floorCenterX = floor.position.x;
         const floorWidth = 400;
         const halfWidth = floorWidth / 2;
   
@@ -483,7 +766,8 @@ io.on('connection', (socket) => {
   
       } else {
         // «Right floor»
-        const floorCenterX = lobby.floorRight.position.x;
+        const [floor, leftW, rightW] = lobby.boxRightWalls;
+        const floorCenterX = floor.position.x;
         const floorWidth = 400;
         const halfWidth = floorWidth / 2;
   
@@ -517,28 +801,33 @@ io.on('connection', (socket) => {
     const playerCount = lobby.players.size;
   
     if (playerCount === 1) {
-      // Один игрок => placeFloorSingle
-      placeFloorSingle(lobby);
-      // Обновляем координаты floorSingle
-      if (lobby.floorSingle) {
-        Matter.Body.setPosition(lobby.floorSingle, {
-          x: width / 2,
-          y: height - 25 // или height - 25, как вам нужно
-        });
+      // Один игрок
+      placeBoxSingle(lobby);
+      // Обновляем координаты boxSingleWalls
+      if (lobby.boxSingleWalls) {
+        const [floor, leftW, rightW] = lobby.boxSingleWalls;
+        Matter.Body.setPosition(floor, { x: width/2, y: height - 25 });
+        Matter.Body.setPosition(leftW, {  x: width/2 - 200, y: height - 25 - 50 });
+        Matter.Body.setPosition(rightW, { x: width/2 + 200, y: height - 25 - 50 });
       }
     } else if (playerCount === 2) {
       // Два игрока => placeFloorDouble
-      placeFloorDouble(lobby);
+      placeBoxDouble(lobby);
       // Обновляем координаты для leftFloor, rightFloor
-      if (lobby.floorLeft && lobby.floorRight) {
-        Matter.Body.setPosition(lobby.floorLeft, {
-          x: width / 4,
-          y: height - 25
-        });
-        Matter.Body.setPosition(lobby.floorRight, {
-          x: (3 * width) / 4,
-          y: height - 25
-        });
+      if (lobby.boxLeftWalls && lobby.boxRightWalls) {
+        const floorY = height - 25;
+        const leftCenterX  = width / 4;
+        // leftBox = [floorL, wallL1, wallL2]
+        const [lfloor, lwall1, lwall2] = lobby.boxLeftWalls;
+        Matter.Body.setPosition(lfloor,  { x: leftCenterX, y: floorY });
+        Matter.Body.setPosition(lwall1,  { x: leftCenterX - 200, y: floorY - 50 });
+        Matter.Body.setPosition(lwall2,  { x: leftCenterX + 200, y: floorY - 50 });
+        // right box
+        const rightCenterX = (3*width)/4;
+        const [rfloor, rwall1, rwall2] = lobby.boxRightWalls;
+        Matter.Body.setPosition(rfloor,  { x: rightCenterX, y: floorY });
+        Matter.Body.setPosition(rwall1,  { x: rightCenterX - 200, y: floorY - 50 });
+        Matter.Body.setPosition(rwall2,  { x: rightCenterX + 200, y: floorY - 50 });
       }
     }
   });
@@ -557,7 +846,7 @@ io.on('connection', (socket) => {
         } else {
           lobby.players.delete(socket.id);
           if (lobby.players.size === 1) {
-            placeFloorSingle(lobby);
+            placeBoxSingle(lobby);
             resetGame(id);
           } else if (lobby.players.size === 0) {
             clearInterval(lobby.intervalId);

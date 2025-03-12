@@ -1,5 +1,7 @@
 // Всё в async-коде, т.к. Pixi 8 позволяет await app.init()
 
+
+let gameOverHappened = false;
 // DOM элементы
 const infoElem = document.getElementById('info');
 const inviteBox = document.getElementById('inviteBox');
@@ -33,6 +35,9 @@ let currentPreviewItemId = null;
 let mouseX = 400;
 let localPreviewX = 400;
 let mouseMoveActive = false;
+
+// Чтобы вычислять dt
+let lastUpdateTime = performance.now();
 
 // Обработчик кнопки "спавн"
 spawnBtn.addEventListener('click', () => {
@@ -141,6 +146,15 @@ socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playe
 //   app.stage - наша контейнер-сцена
 
 socket.on('stateUpdate', async (objects) => {
+  if (gameOverHappened) {
+    // Если игра окончена, мы игнорируем новые координаты (для slow motion)
+    return;
+  }
+
+  const now = performance.now();
+  const dtSec = (now - lastUpdateTime) / 1000;
+  lastUpdateTime = now;
+
   // Собираем ID, которые пришли в этом "кадре"
   const existingIds = new Set();
   
@@ -150,7 +164,12 @@ socket.on('stateUpdate', async (objects) => {
     // 1) Проверяем, нет ли уже записи в itemSprites
     if (!itemSprites[obj.id]) {
       // => создаём «placeholder»
-      itemSprites[obj.id] = { loading: true, sprite: null, spritePath: obj.sprite };
+      itemSprites[obj.id] = { loading: true, sprite: null, spritePath: obj.sprite,
+        lastX: obj.x,
+        lastY: obj.y,
+        velocityX: 0,
+        velocityY: 0
+       };
       
       // Запускаем асинхронную загрузку в IIFE
       (async () => {
@@ -189,8 +208,18 @@ socket.on('stateUpdate', async (objects) => {
         }
       })();
     } else {
-      // Если уже есть запись, проверяем, есть ли sprite
       const record = itemSprites[obj.id];
+      const dx = obj.x - record.lastX;
+      const dy = obj.y - record.lastY;
+
+      if (dtSec > 0) {
+        record.velocityX = dx / dtSec;
+        record.velocityY = dy / dtSec;
+      }
+      
+      record.lastX = obj.x;
+      record.lastY = obj.y;
+      // Если уже есть запись, проверяем, есть ли sprite
 
       // 5) Если sprite уже создан, обновляем координаты
       if (!record.loading && record.sprite) {
@@ -229,6 +258,18 @@ socket.on('scoreUpdated', ({ scoringPlayer, pointsGained, scores }) => {
   // updateScoreUI(scores, scoringPlayer, pointsGained);
 });
 
+socket.on('gameOver', (data) => {
+  console.log(data);
+  gameOverHappened = true;
+  startLocalSlowMotion(() => {
+    removeItemsOneByOne();
+  });
+});
+
+socket.on('gameRestarted', (data) => {
+  gameOverHappened = false;
+});
+
 // === Плавное движение (preview) ===
 function startMouseFollow() {
   mouseMoveActive = true;
@@ -239,6 +280,82 @@ function stopMouseFollow() {
   mouseMoveActive = false;
   currentPreviewItemId = null;
 }
+
+function startLocalSlowMotion(onDone) {
+  const duration = 2000; // 2 секунды
+  let startTime = 0;     // будет заполнен при первом кадре
+  let animFrameId = null;
+
+  const factorStart = 0.2;
+  const factorEnd   = 0.0;
+  const factorRange = factorStart - factorEnd; // 0.5
+
+  function animateSlowMotion(timestamp) {
+    if (startTime === 0) {
+      // Начало анимации
+      startTime = timestamp;
+    }
+    // Сколько прошло?
+    const elapsed = timestamp - startTime;     // в миллисекундах
+    const progress = Math.min(1, elapsed / duration);  // 0..1
+    const factor = factorStart - factorRange * progress; 
+
+    // Обходим все предметы и уменьшаем скорость
+    for (const [id, record] of Object.entries(itemSprites)) {
+      if (!record.sprite) continue;
+      // Экспоненциальное затухание: velocity *= factor
+      record.velocityX *= factor;
+      record.velocityY *= factor;
+
+      // Передвигаем предмет
+      // Для dt – возьмём ~1/60 секунды (упрощённо),
+      // или можно привязаться к (elapsedTime с прошлого кадра)
+      const dt = 1/60;
+      record.sprite.x += record.velocityX * dt;
+      record.sprite.y += record.velocityY * dt;
+    }
+
+    if (progress < 1) {
+      // Ещё не закончили → следующий кадр
+      animFrameId = requestAnimationFrame(animateSlowMotion);
+    } else {
+      // Закончили анимацию
+      if (onDone) onDone();
+    }
+  }
+
+  // Запуск анимации
+  animFrameId = requestAnimationFrame(animateSlowMotion);
+}
+
+function removeItemsOneByOne(onComplete) {
+  // Получаем массив itemIds
+  const itemIds = Object.keys(itemSprites);
+  let index = 0;
+
+  function removeNext() {
+    if (index >= itemIds.length) {
+      // Все удалены
+      if (onComplete) onComplete();
+      return;
+    }
+    const id = itemIds[index++];
+    const record = itemSprites[id];
+    // Удаляем спрайт из сцены
+    if (record && record.sprite) {
+      app.stage.removeChild(record.sprite);
+    }
+    // Удаляем саму запись
+    delete itemSprites[id];
+
+    // Подождём 300 мс и уберём следующий
+    setTimeout(removeNext, 500);
+  }
+  
+  // Стартуем первый
+  removeNext();
+}
+
 
 function animatePreview() {
   if (!mouseMoveActive) return;
