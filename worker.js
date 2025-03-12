@@ -13,11 +13,11 @@ const process = require('process');
 // === MOCK DATABASE ===
 let mockDatabase = {
   leaderboard: [
-    { id: 1, username: "player1", score: 5000, achieved_at: 1741449751564 },
-    { id: 2, username: "player2", score: 4000, achieved_at: 1741449751564 },
-    { id: 3, username: "player3", score: 3000, achieved_at: 1741449751564 },
-    { id: 4, username: "player4", score: 2000, achieved_at: 1741449751564 },
-    { id: 5, username: "player5", score: 1000, achieved_at: 1741449751564 }
+    { id: 1, username: "player1", score: 50, achieved_at: 1741793762539 },
+    { id: 2, username: "player2", score: 40, achieved_at: 1741793762539 },
+    { id: 3, username: "player3", score: 30, achieved_at: 1741793762539 },
+    { id: 4, username: "player4", score: 20, achieved_at: 1741793762539 },
+    { id: 5, username: "player5", score: 10, achieved_at: 1741793762539 }
   ],
   rarity_points: [
     { id: 1, name: "common", value: 10 },
@@ -91,6 +91,8 @@ function createLobby() {
     boxLeftWalls: null,
     boxRightWalls: null,
     owner: null,
+    winnerId: null,
+    finalScore: 0,
     gameOver: false,
   };
 
@@ -232,10 +234,14 @@ function endGameSingle(lobbyId, playerId) {
   
   // Допустим, выводим очки
   const finalScore = lobby.scores[playerId] || 0;
+
+  lobby.winnerId = lobby.owner;
+  lobby.finalScore = finalScore;
   
   io.to(lobbyId).emit('gameOver', {
+    winnerId: lobby.owner,
     finalScore,
-    message: `Игра окончена. Ваши очки: ${finalScore}`
+    message: `Игра окончена. Ваши очки: ${finalScore}`,
   });
 
   // Можем разорвать лобби/очистить
@@ -248,26 +254,22 @@ function endGameMultiplayer(lobbyId, sideLost) {
   if (!lobby) return;
 
   // Определяем: если sideLost==='left' => owner проиграл. Иначе выиграл.
-  let winnerId, loserId;
+  let winnerId;
   if (sideLost==='left') {
-    loserId = lobby.owner;
     winnerId= [...lobby.players].find(id=> id!==lobby.owner);
   } else {
     winnerId= lobby.owner;
-    loserId = [...lobby.players].find(id=> id!==lobby.owner);
   }
 
-  const winnerScore= lobby.scores[winnerId] || 0;
-  const loserScore = lobby.scores[loserId]  || 0;
+  const finalScore= lobby.scores[winnerId] || 0;
 
-  console.log(winnerScore, loserScore);
+  lobby.winnerId = winnerId;
+  lobby.finalScore = finalScore;
 
   io.to(lobbyId).emit('gameOver', {
     winnerId,
-    loserId,
-    winnerScore,
-    loserScore,
-    message: `Игрок ${winnerId} победил! (${winnerScore} очков)`
+    finalScore,
+    message: `Игрок ${winnerId} победил! (${finalScore} очков)`
   });
 
   // Скажем, дальше можно удалить лобби
@@ -483,7 +485,7 @@ function resetGame(lobbyId) {
 // Проверяем комбинации при столкновении
 function handleCollisions(lobbyId, event) {
   const lobby = lobbies[lobbyId];
-  if (!lobby) return;
+  if (!lobby || lobby.gameOver) return;
 
   for (const pair of event.pairs) {
     const bodyA = pair.bodyA;
@@ -609,6 +611,93 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function updateLeaderboard(nickname, newScore) {
+  // 1) Чистим старые записи
+  cleanupLeaderboard();
+
+  // 2) Ищем запись с таким ником
+  let existing = mockDatabase.leaderboard.find(e => e.username === nickname);
+
+  if (existing) {
+    // Если новый score > имеющегося
+    if (newScore > existing.score) {
+      existing.score = newScore;
+      existing.achieved_at = Date.now();
+    } else {
+      // Если рекорд не побит - ничего не делаем
+      return;
+    }
+  } else {
+    // Ник не найден
+    // Если в таблице меньше 5
+    if (mockDatabase.leaderboard.length < 5) {
+      // Просто добавляем
+      mockDatabase.leaderboard.push({
+        id: Date.now(), // или любой id
+        username: nickname,
+        score: newScore,
+        achieved_at: Date.now()
+      });
+    } else {
+      // Уже 5 записей => проверим, не лучше ли newScore минимума
+      mockDatabase.leaderboard.sort((a,b) => b.score - a.score); // по убыванию
+      const last = mockDatabase.leaderboard[mockDatabase.leaderboard.length - 1];
+      if (newScore > last.score) {
+        // Удаляем последний
+        mockDatabase.leaderboard.pop();
+        // Добавляем нового
+        mockDatabase.leaderboard.push({
+          id: Date.now(),
+          username: nickname,
+          score: newScore,
+          achieved_at: Date.now()
+        });
+      } else {
+        // не вошли в топ-5
+        return;
+      }
+    }
+  }
+
+  // 3) Снова сортируем
+  mockDatabase.leaderboard.sort((a,b) => b.score - a.score);
+  // 4) Оставляем только 5
+  if (mockDatabase.leaderboard.length > 5) {
+    mockDatabase.leaderboard.length = 5;
+  }
+}
+
+function getTop5() {
+  // scoreboard уже отсортирован (но на всякий случай можно пересортировать):
+  mockDatabase.leaderboard.sort((a,b) => b.score - a.score);
+  // создаём "плоский" массив
+  return mockDatabase.leaderboard.map(e => ({
+    id: e.id,
+    username: e.username,
+    score: e.score
+  }));
+}
+
+function cleanupLeaderboard() {
+  const now = Date.now();
+  const weekMs = 7 * 24 * 60 * 60 * 1000;
+  mockDatabase.leaderboard = mockDatabase.leaderboard.filter(e => 
+    (e.achieved_at + weekMs) >= now
+  );
+}
+
+function broadcastLeaderboardToSoloPlayers() {
+  const top5 = getTop5();
+  // Перебираем все лобби
+  for (const [lobbyId, lobby] of Object.entries(lobbies)) {
+    if (lobby.players.size === 1) {
+      // Шлём именно в это лобби
+      io.to(lobbyId).emit('leaderboardUpdated', { leaderboard: top5 });
+    }
+  }
+}
+
+
 /** === События Socket.IO === */
 io.on('connection', (socket) => {
   console.log(`[Worker ${process.pid}] Connection: ${socket.id}`);
@@ -626,6 +715,9 @@ io.on('connection', (socket) => {
 
     // Ставим boxSingleWalls (один игрок пока)
     placeBoxSingle(lobby);
+
+    // Отправляем сразу таблицу рекордов
+    socket.emit('leaderboardUpdated', { leaderboard: getTop5() });
 
     resetGame(lobbyId);
   });
@@ -651,6 +743,9 @@ io.on('connection', (socket) => {
     socket.join(lobbyId);
     socket.emit('joinedLobby', { lobbyId, isOwner: false });
     io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
+
+    // Отправляем сразу таблицу рекордов
+    socket.emit('leaderboardUpdated', { leaderboard: getTop5() });
 
     // Теперь у нас 2 игрока => два пола
     placeBoxDouble(lobby);
@@ -830,6 +925,28 @@ io.on('connection', (socket) => {
         Matter.Body.setPosition(rwall2,  { x: rightCenterX + 200, y: floorY - 50 });
       }
     }
+  });
+
+  socket.on('submitNickname', ({ lobbyId, nickname }) => {
+    const lobby = lobbies[lobbyId];
+    if (!lobby) return;
+  
+    // Очки игрока
+    const score = (lobby.scores && lobby.scores[socket.id]) || 0;
+
+    // Проверяем, режим одиночный или двое
+    console.log(lobby.winnerId, socket.id, lobby.players.size);
+    if (lobby.players.size === 2) {
+      if (lobby.winnerId !== socket.id) return;
+    }
+
+    console.log(nickname, score);
+  
+    // Вызываем функцию, которая пытается вставить/обновить в leaderboard
+    updateLeaderboard(nickname, score);
+    
+    // После обновления – рассылаем всем новый топ-5
+    broadcastLeaderboardToSoloPlayers();
   });
 
   // Отключение

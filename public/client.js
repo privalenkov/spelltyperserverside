@@ -12,6 +12,7 @@ const spawnBtn = document.getElementById('spawnBtn');
 let currentLobbyId = null;
 let isLobbyOwner = false;
 
+let leaderboardData = [];
 // Подключение Socket.IO
 const socket = window.io(); // глобальный io, т.к. < src="/socket.io/socket.io.js">
 
@@ -262,12 +263,31 @@ socket.on('gameOver', (data) => {
   console.log(data);
   gameOverHappened = true;
   startLocalSlowMotion(() => {
-    removeItemsOneByOne();
+    removeItemsOneByOne(() => {
+      if (data?.winnerId !== socket.id) return;
+      console.log(data.finalScore, isTopFive(data.finalScore))
+      if (!isTopFive(data.finalScore)) return;
+      const nickname = prompt('Поздравляю, вы установили новый рекорд! Введите ваш ник, чтобы сохранить его на доске почета');
+      if (nickname && nickname.trim() !== '') {
+        // Отправляем на сервер
+        console.log('to server', nickname, currentLobbyId)
+        socket.emit('submitNickname', { lobbyId: currentLobbyId, nickname });
+      } else {
+        console.log('Ник не введён. Рекорд не сохранён.');
+      }
+    });
   });
 });
 
 socket.on('gameRestarted', (data) => {
   gameOverHappened = false;
+});
+
+socket.on('leaderboardUpdated', ({ leaderboard }) => {
+  console.log('New Top 5:', leaderboard);
+  leaderboardData = [...leaderboard]
+  // Пример: обновить DOM-элемент 
+  // updateLeaderboardUI(leaderboard);
 });
 
 // === Плавное движение (preview) ===
@@ -354,6 +374,14 @@ function removeItemsOneByOne(onComplete) {
   
   // Стартуем первый
   removeNext();
+}
+
+function isTopFive(score) {
+  if (leaderboardData.some((data) => data.score < score)) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 
