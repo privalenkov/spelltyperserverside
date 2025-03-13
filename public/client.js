@@ -31,6 +31,8 @@ document.getElementById('pixi-container').appendChild(app.canvas);
 // Хранилище Pixi-спрайтов: itemId -> { sprite, spritePath, etc. }
 const itemSprites = {};
 
+let combinationCounters = {};
+
 // Механика "preview"
 let currentPreviewItemId = null;
 let mouseX = 400;
@@ -278,6 +280,12 @@ socket.on('gameOver', (data) => {
       window.location.href = '/';
     });
   });
+});
+
+socket.on('combinationCounters', (counters) => {
+  console.log('combinationCounters:', counters);
+  combinationCounters = counters;
+  // updateCombinationUI();
 });
 
 socket.on('gameRestarted', (data) => {

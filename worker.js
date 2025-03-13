@@ -4,6 +4,7 @@
  * 2) Работает с mockDatabase (words, combinations) и раздаёт статику из public/.
  */
 
+const crypto = require('crypto');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -64,7 +65,7 @@ process.on('message', (msg, connection) => {
 const lobbies = {};
 
 function createLobby() {
-  const lobbyId = Math.random().toString(36).slice(2, 7);
+  const lobbyId = crypto.randomBytes(8).toString('hex');
 
   // Matter.js
   const engine = Matter.Engine.create();
@@ -94,6 +95,7 @@ function createLobby() {
     winnerId: null,
     finalScore: 0,
     gameOver: false,
+    combinationsCounter: {}, // { socketId: count }
   };
 
   // Подписка на столкновения
@@ -436,6 +438,7 @@ function resetGame(lobbyId) {
 
   // Сбрасываем флаг gameOver, 
   // чтобы снова можно было проверять падения
+  lobby.combinationsCounter = {};
   lobby.gameOver = false;
 
   // Удаляем все тела, кроме пола(ов) / стен(ок)
@@ -478,9 +481,60 @@ function resetGame(lobbyId) {
 
   // Отправляем новое состояние
   sendLobbyState(lobbyId);
+  sendCombinationCounters(lobbyId);
   io.to(lobbyId).emit('gameRestarted', { message: 'Игра началась заново!' });
 }
 
+function sendCombinationCounters(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  const [playerA, playerB] = [...lobby.players];
+  const counters = {
+    [playerA]: lobby.combinationsCounter[playerA] || 0,
+    [playerB]: lobby.combinationsCounter[playerB] || 0,
+  };
+  console.log(lobby.combinationsCounter[playerA], lobby.combinationsCounter[playerB])
+  io.to(lobbyId).emit('combinationCounters', counters);
+}
+
+function spawnRandomItemForOpponent(lobby, ownerId) {
+  const opponentId = [...lobby.players].find(id => id !== ownerId);
+  const isOpponentOwner = (opponentId === lobby.owner);
+
+  const validWords = mockDatabase.words.filter(w => w.word !== null);
+  const found = validWords[Math.floor(Math.random() * validWords.length)];
+
+    // Проверяем, есть ли уже у этого игрока предмет с таким guid
+    // Проходим itemDataMap, ищем item где item.ownerId === socket.id и item.guid === found.guid
+    for (const [id, itemData] of lobby.itemDataMap.entries()) {
+      if (itemData.ownerId === opponentId && itemData.guid === found.guid) return;
+    }
+
+    const rarity = mockDatabase.rarity_points.find(r => r.id === found.rarityId);
+
+    // Вычисляем X в зависимости от числа игроков и кто мы
+    const spawnX = isOpponentOwner ? (lobby.simWidth / 4) : (3 * lobby.simWidth / 4);
+
+    const spawnY = 100;
+
+    // Создаем статический body (превью)
+    const body = Matter.Bodies.circle(spawnX, spawnY, 20, {
+      label: found.word || 'unnamed'
+    });
+    Matter.Body.setStatic(body, false);
+    const newId = lobby.nextBodyId++;
+    lobby.bodyMap.set(newId, body);
+    Matter.World.add(lobby.engine.world, body);
+
+    lobby.itemDataMap.set(newId, {
+      guid: found.guid,
+      word: found.word,
+      rarityId: found.rarityId,
+      rarityName: rarity?.name || 'unknown',
+      sprite: found.sprite,
+      combinationGuids: found.combinationGuids,
+      ownerId: opponentId,
+    });
+}
 
 // Проверяем комбинации при столкновении
 function handleCollisions(lobbyId, event) {
@@ -547,6 +601,25 @@ function handleCollisions(lobbyId, event) {
             newRarity: rarity?.name,
             sprite: resultWord.sprite
           });
+
+          // Подсчет комбинаций и проверка спавна противнику
+          if (lobby.players.size === 2) {
+            // Определяем владельца одного из комбинированных предметов (они должны быть одинаковы)
+            const ownerId = itemA.ownerId || itemB.ownerId;
+            console.log(ownerId);
+            if (!ownerId) return;
+
+            lobby.combinationsCounter[ownerId] = (lobby.combinationsCounter[ownerId] || 0) + 1;
+
+            console.log(lobby.combinationsCounter[ownerId]);
+            if (lobby.combinationsCounter[ownerId] >= 5) {
+              lobby.combinationsCounter[ownerId] = 0;
+              spawnRandomItemForOpponent(lobby, ownerId);
+              
+            }
+
+            sendCombinationCounters(lobbyId);
+          }
 
           // ========== Подсчёт очков ==========
           // Найдём rarity для itemA, itemB
