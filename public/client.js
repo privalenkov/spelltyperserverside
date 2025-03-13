@@ -282,10 +282,26 @@ socket.on('gameOver', (data) => {
   });
 });
 
-socket.on('combinationCounters', (counters) => {
-  console.log('combinationCounters:', counters);
+socket.on('spawnCounters', (counters) => {
+  console.log('spawnCounters:', counters);
   combinationCounters = counters;
   // updateCombinationUI();
+});
+
+socket.on('comboCounters', (counters) => {
+  const myCombo = counters[socket.id] || 0;
+  const opponentId = Object.keys(counters).find(id => id !== socket.id);
+  const opponentCombo = counters[opponentId] || 0;
+
+  console.log(myCombo, opponentCombo);
+});
+
+socket.on('comboApplied', ({ socketId, multiplier, newScore }) => {
+  if (socketId === socket.id) {
+    console.log(`Ваше комбо ×${multiplier}! Новый счёт: ${newScore}`);
+  } else {
+    console.log(`Комбо противника ×${multiplier}! Его новый счёт: ${newScore}`);
+  }
 });
 
 socket.on('gameRestarted', (data) => {

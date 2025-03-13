@@ -95,7 +95,8 @@ function createLobby() {
     winnerId: null,
     finalScore: 0,
     gameOver: false,
-    combinationsCounter: {}, // { socketId: count }
+    spawnCounters: {}, // { socketId: count }
+    comboCounters: {} // { socketId: {count: number, lastComboTime: timestamp} }
   };
 
   // Подписка на столкновения
@@ -438,7 +439,7 @@ function resetGame(lobbyId) {
 
   // Сбрасываем флаг gameOver, 
   // чтобы снова можно было проверять падения
-  lobby.combinationsCounter = {};
+  lobby.spawnCounters = {};
   lobby.gameOver = false;
 
   // Удаляем все тела, кроме пола(ов) / стен(ок)
@@ -481,19 +482,33 @@ function resetGame(lobbyId) {
 
   // Отправляем новое состояние
   sendLobbyState(lobbyId);
-  sendCombinationCounters(lobbyId);
+  sendSpawnCounters(lobbyId);
   io.to(lobbyId).emit('gameRestarted', { message: 'Игра началась заново!' });
 }
 
-function sendCombinationCounters(lobbyId) {
+function sendSpawnCounters(lobbyId) {
   const lobby = lobbies[lobbyId];
   const [playerA, playerB] = [...lobby.players];
   const counters = {
-    [playerA]: lobby.combinationsCounter[playerA] || 0,
-    [playerB]: lobby.combinationsCounter[playerB] || 0,
+    [playerA]: lobby.spawnCounters[playerA] || 0,
+    [playerB]: lobby.spawnCounters[playerB] || 0,
   };
-  console.log(lobby.combinationsCounter[playerA], lobby.combinationsCounter[playerB])
-  io.to(lobbyId).emit('combinationCounters', counters);
+  io.to(lobbyId).emit('spawnCounters', counters);
+}
+
+function sendComboCounters(lobbyId) {
+  const lobby = lobbies[lobbyId];
+  const counters = {};
+
+  for (const [playerId, count] of Object.entries(lobby.comboCounters || {})) {
+    if (count >= 2) {
+      counters[playerId] = count;
+    }
+  }
+
+  if (Object.keys(counters).length > 0) {
+    io.to(lobbyId).emit('comboCounters', counters);
+  }
 }
 
 function spawnRandomItemForOpponent(lobby, ownerId) {
@@ -534,6 +549,28 @@ function spawnRandomItemForOpponent(lobby, ownerId) {
       combinationGuids: found.combinationGuids,
       ownerId: opponentId,
     });
+}
+
+function applyComboMultiplier(lobbyId, socketId) {
+  const lobby = lobbies[lobbyId];
+  if (!lobby) return;
+
+  const comboCount = lobby.comboCounters[socketId] || 1;
+
+  if (comboCount > 1) {
+    // Применяем множитель
+    lobby.scores[socketId] *= comboCount;
+
+    // Оповещаем игроков
+    io.to(lobbyId).emit('comboApplied', {
+      socketId,
+      multiplier: comboCount,
+      newScore: lobby.scores[socketId]
+    });
+  }
+
+  lobby.comboCounters[socketId] = 0;
+  sendComboCounters(lobbyId);
 }
 
 // Проверяем комбинации при столкновении
@@ -591,6 +628,7 @@ function handleCollisions(lobbyId, event) {
             rarityName: rarity?.name || 'unknown',
             sprite: resultWord.sprite,
             combinationGuids: resultWord.combinationGuids,
+            ownerId: itemA.ownerId || itemB.ownerId,
           });
 
           io.to(lobbyId).emit('itemCombined', {
@@ -606,20 +644,34 @@ function handleCollisions(lobbyId, event) {
           if (lobby.players.size === 2) {
             // Определяем владельца одного из комбинированных предметов (они должны быть одинаковы)
             const ownerId = itemA.ownerId || itemB.ownerId;
-            console.log(ownerId);
             if (!ownerId) return;
 
-            lobby.combinationsCounter[ownerId] = (lobby.combinationsCounter[ownerId] || 0) + 1;
+            lobby.spawnCounters[ownerId] = (lobby.spawnCounters[ownerId] || 0) + 1;
 
-            console.log(lobby.combinationsCounter[ownerId]);
-            if (lobby.combinationsCounter[ownerId] >= 5) {
-              lobby.combinationsCounter[ownerId] = 0;
+            if (lobby.spawnCounters[ownerId] >= 5) {
+              lobby.spawnCounters[ownerId] = 0;
               spawnRandomItemForOpponent(lobby, ownerId);
               
             }
 
-            sendCombinationCounters(lobbyId);
+            sendSpawnCounters(lobbyId);
           }
+
+          const ownerId = itemA.ownerId || itemB.ownerId;
+          if (!ownerId) return;
+
+          // Увеличиваем счетчик комбо игрока
+          lobby.comboCounters[ownerId] = (lobby.comboCounters[ownerId] || 0) + 1;
+
+          // Перезапускаем таймер комбо
+          clearTimeout(lobby.comboTimers?.[ownerId]);
+          if (!lobby.comboTimers) lobby.comboTimers = {};
+
+          lobby.comboTimers[ownerId] = setTimeout(() => {
+            applyComboMultiplier(lobbyId, ownerId);
+          }, 3000); // 3 секунды на комбо
+
+          sendComboCounters(lobbyId);
 
           // ========== Подсчёт очков ==========
           // Найдём rarity для itemA, itemB
