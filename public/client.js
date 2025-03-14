@@ -53,6 +53,27 @@ spawnBtn.addEventListener('click', () => {
   socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord });
 });
 
+wordInput.addEventListener('input', () => {
+  if (!currentLobbyId) return;
+  socket.emit('typingWord', {
+    lobbyId: currentLobbyId,
+    word: wordInput.value,
+  });
+});
+
+let typingTimeout;
+let opponentTypingElem;
+
+socket.on('opponentTyping', ({ opponentId, word }) => {
+  clearTimeout(typingTimeout);
+  console.log(opponentTypingElem);
+  opponentTypingElem.textContent = `Противник печатает: ${word}`;
+
+  typingTimeout = setTimeout(() => {
+    opponentTypingElem.textContent = '';
+  }, 1000);
+}); 
+
 // Pixi canvas: движение мыши
 app.canvas.addEventListener('mousemove', (e) => { mouseX = e.offsetX; });
 
@@ -97,6 +118,7 @@ socket.on('lobbyCreated', ({ lobbyId, isOwner }) => {
 });
 
 socket.on('joinedLobby', ({ lobbyId, isOwner }) => {
+  console.log('joined');
   currentLobbyId = lobbyId;
   infoElem.textContent = `Вы в лобби: ${lobbyId}`;
   if (isOwner) {
@@ -120,7 +142,10 @@ socket.on('lobbyClosed', ({ message }) => {
 
 socket.on('joinError', (msg) => { infoElem.textContent = `Ошибка: ${msg}`; });
 
-socket.on('playerJoined', ({ playerId }) => { console.log('Другой игрок:', playerId); });
+socket.on('playerJoined', ({ playerId }) => {
+  console.log('Другой игрок:', playerId);
+  createOpponentTypingElem();
+});
 
 socket.on('spawnError', ({ message }) => { alert('spawnError: ' + message); });
 
@@ -324,6 +349,17 @@ function startMouseFollow() {
 function stopMouseFollow() {
   mouseMoveActive = false;
   currentPreviewItemId = null;
+}
+
+function createOpponentTypingElem() {
+  if (!opponentTypingElem) {
+    opponentTypingElem = document.createElement('div');
+    opponentTypingElem.id = 'opponentTyping';
+    opponentTypingElem.style.color = 'yellow';
+    opponentTypingElem.style.marginTop = '10px';
+    console.log(opponentTypingElem);
+    document.getElementById('gameUI').appendChild(opponentTypingElem);
+  }
 }
 
 function startLocalSlowMotion(onDone) {

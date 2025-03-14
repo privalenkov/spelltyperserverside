@@ -878,6 +878,13 @@ io.on('connection', (socket) => {
     resetGame(lobbyId);
   });
 
+  socket.on('typingWord', ({ lobbyId, word }) => {
+    const lobby = lobbies[lobbyId];
+    if (!lobby) return;
+  
+    socket.to(lobbyId).emit('opponentTyping', { opponentId: socket.id, word });
+  });
+
   // Игрок вводит слово -> spawnItem
   socket.on('spawnItemByWord', ({ lobbyId, typedWord }) => {
     const lobby = lobbies[lobbyId];
