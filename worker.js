@@ -96,7 +96,8 @@ function createLobby() {
     finalScore: 0,
     gameOver: false,
     spawnCounters: {}, // { socketId: count }
-    comboCounters: {} // { socketId: {count: number, lastComboTime: timestamp} }
+    comboCounters: {}, // { socketId: {count: number, lastComboTime: timestamp} }
+    currentPreview: {}, // { socketId: null or itemId } хранит состояние предмет дропнут или нет
   };
 
   // Подписка на столкновения
@@ -491,8 +492,12 @@ function sendSpawnCounters(lobbyId) {
   const [playerA, playerB] = [...lobby.players];
   const counters = {
     [playerA]: lobby.spawnCounters[playerA] || 0,
-    [playerB]: lobby.spawnCounters[playerB] || 0,
   };
+
+  if (playerB) {
+    counters[playerB] = lobby.spawnCounters[playerB] || 0;
+  }
+
   io.to(lobbyId).emit('spawnCounters', counters);
 }
 
@@ -858,6 +863,7 @@ io.on('connection', (socket) => {
       socket.emit('joinError', 'Лобби заполнено');
       return;
     }
+    const ownerId = [...lobby.players][0];
     lobby.players.add(socket.id);
     if (!lobby.scores) {
       lobby.scores = {};
@@ -867,10 +873,12 @@ io.on('connection', (socket) => {
 
     socket.join(lobbyId);
     socket.emit('joinedLobby', { lobbyId, isOwner: false });
-    io.to(lobbyId).emit('playerJoined', { playerId: socket.id });
+    if (ownerId === lobby.owner) {
+      socket.to(lobbyId).emit('playerJoined', { playerId: socket.id });
+    }
 
     // Отправляем сразу таблицу рекордов
-    socket.emit('leaderboardUpdated', { leaderboard: getTop5() });
+    // socket.emit('leaderboardUpdated', { leaderboard: getTop5() });
 
     // Теперь у нас 2 игрока => два пола
     placeBoxDouble(lobby);
@@ -890,6 +898,12 @@ io.on('connection', (socket) => {
     const lobby = lobbies[lobbyId];
     if (!lobby) return;
 
+    if (lobby.currentPreview[socket.id]) {
+      // Значит у игрока уже есть предмет, который не брошен => запрет
+      socket.emit('spawnError', { message: 'Вы уже спавните предмет, бросьте сначала!' });
+      return;
+    }
+
     const found = mockDatabase.words.find(w => w.word === typedWord);
     if (!found) {
       socket.emit('spawnError', { message: 'Слово не найдено' });
@@ -899,7 +913,10 @@ io.on('connection', (socket) => {
     // Проверяем, есть ли уже у этого игрока предмет с таким guid
     // Проходим itemDataMap, ищем item где item.ownerId === socket.id и item.guid === found.guid
     for (const [id, itemData] of lobby.itemDataMap.entries()) {
-      if (itemData.ownerId === socket.id && itemData.guid === found.guid) return;
+      if (itemData.ownerId === socket.id && itemData.guid === found.guid) {
+        socket.emit('spawnError', { message: 'Объект уже есть в котле' });
+        return;
+      };
     }
 
     const rarity = mockDatabase.rarity_points.find(r => r.id === found.rarityId);
@@ -947,6 +964,8 @@ io.on('connection', (socket) => {
       owner: isOwner,
       playerCount: lobby.players.size,
     });
+
+    lobby.currentPreview[socket.id] = newId;
   });
 
   // Движение предмета по X
@@ -1022,6 +1041,11 @@ io.on('connection', (socket) => {
     const body = lobby.bodyMap.get(itemId);
     if (!body) return;
     Matter.Body.setStatic(body, false);
+
+    if (lobby.currentPreview[socket.id] === itemId) {
+      // освобождаем
+      lobby.currentPreview[socket.id] = null;
+    }
   });
 
   // Новый обработчик: получение новых размеров симуляции
@@ -1101,6 +1125,7 @@ io.on('connection', (socket) => {
           delete lobbies[id];
           console.log(`[Worker ${process.pid}] Removed lobby (owner left): ${id}`);
         } else {
+          io.to(id).emit('playerLeaved', { message: 'Игрок покинул лобби.' });
           lobby.players.delete(socket.id);
           if (lobby.players.size === 1) {
             placeBoxSingle(lobby);

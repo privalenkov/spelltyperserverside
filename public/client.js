@@ -1,3 +1,4 @@
+import { ArcWordInput } from './effects.js';
 // Всё в async-коде, т.к. Pixi 8 позволяет await app.init()
 
 
@@ -5,12 +6,12 @@ let gameOverHappened = false;
 // DOM элементы
 const infoElem = document.getElementById('info');
 const inviteBox = document.getElementById('inviteBox');
-const wordInput = document.getElementById('wordInput');
 const spawnBtn = document.getElementById('spawnBtn');
 
 // Лобби
 let currentLobbyId = null;
 let isLobbyOwner = false;
+let joinedPlayerId = null;
 
 let leaderboardData = [];
 // Подключение Socket.IO
@@ -20,6 +21,37 @@ const socket = window.io(); // глобальный io, т.к. < src="/socket.io
 const app = new PIXI.Application();
 // В newer Pixi 8, требуется await app.init(...):
 await app.init({ width: window.innerWidth, height: window.innerHeight });
+await PIXI.Assets.load('fonts/Spelltyper.ttf');
+
+let wordInputEnemy = null;
+const wordInputPlayer = new ArcWordInput({
+  app,
+  x: 100,
+  y: 100,
+  onValue: (val) => {
+    // console.log("Value changed:", val);
+    if (!currentLobbyId) return;
+    socket.emit('typingWord', {
+      lobbyId: currentLobbyId,
+      word: val,
+    });
+  },
+  onComplete: (val) => {
+    console.log("User pressed Enter with word:", val);
+    // arcInput1.destroy();
+    if (!currentLobbyId) {
+      alert('Вы не в лобби');
+      return;
+    }
+    const typedWord = val.trim();
+    if (!typedWord) return alert('Введите слово!');
+    socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord });
+    wordInputPlayer.setUserInput(false);
+  }
+});
+// setInterval(() => {
+//   arcInput1.value += "X"
+// }, 1000);
 document.getElementById('pixi-container').appendChild(app.canvas);
 
 // const initialWidth = window.innerWidth;
@@ -43,35 +75,26 @@ let mouseMoveActive = false;
 let lastUpdateTime = performance.now();
 
 // Обработчик кнопки "спавн"
-spawnBtn.addEventListener('click', () => {
-  if (!currentLobbyId) {
-    alert('Вы не в лобби');
-    return;
-  }
-  const typedWord = wordInput.value.trim();
-  if (!typedWord) return alert('Введите слово!');
-  socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord });
-});
+// spawnBtn.addEventListener('click', () => {
+//   if (!currentLobbyId) {
+//     alert('Вы не в лобби');
+//     return;
+//   }
+//   const typedWord = wordInputPlayer.value.trim();
+//   if (!typedWord) return alert('Введите слово!');
+//   socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord });
+// });
 
-wordInput.addEventListener('input', () => {
-  if (!currentLobbyId) return;
-  socket.emit('typingWord', {
-    lobbyId: currentLobbyId,
-    word: wordInput.value,
-  });
-});
-
-let typingTimeout;
-let opponentTypingElem;
+// let typingTimeout;
 
 socket.on('opponentTyping', ({ opponentId, word }) => {
-  clearTimeout(typingTimeout);
-  console.log(opponentTypingElem);
-  opponentTypingElem.textContent = `Противник печатает: ${word}`;
+  if (!wordInputEnemy) return;
+  // clearTimeout(typingTimeout);
+  wordInputEnemy.value = word
 
-  typingTimeout = setTimeout(() => {
-    opponentTypingElem.textContent = '';
-  }, 1000);
+  // typingTimeout = setTimeout(() => {
+  //   wordInputEnemy.value = ''
+  // }, 1000);
 }); 
 
 // Pixi canvas: движение мыши
@@ -81,33 +104,36 @@ app.canvas.addEventListener('mousemove', (e) => { mouseX = e.offsetX; });
 app.canvas.addEventListener('mousedown', () => {
   if (currentPreviewItemId) {
     socket.emit('dropItem', { lobbyId: currentLobbyId, itemId: currentPreviewItemId });
+    wordInputPlayer.setUserInput(true);
     stopMouseFollow();
   }
 });
 
-// Смотрим ?lobby=...
+// Смотрим ?r=...
 const urlParams = new URLSearchParams(window.location.search);
-const paramLobbyId = urlParams.get('lobby');
+const paramLobbyId = urlParams.get('r');
 
 if (paramLobbyId) {
+  console.log('test3');
   isLobbyOwner = false;
   socket.emit('joinLobby', { lobbyId: paramLobbyId });
   infoElem.textContent = `Подключаемся к лобби: ${paramLobbyId}...`;
+  wordInputPlayer.setCoords({ x: (3 * window.innerWidth) / 4 });
 } else {
+  console.log('test2');
   isLobbyOwner = true;
+  wordInputPlayer.setCoords({ x: window.innerWidth / 2 });
   socket.emit('autoCreateLobby');
   infoElem.textContent = 'Создаём новое лобби...';
 }
 
 // === Socket.IO ===
 
-socket.on('lobbyCreated', ({ lobbyId, isOwner }) => {
+socket.on('lobbyCreated', ({ lobbyId }) => {
   currentLobbyId = lobbyId;
   infoElem.textContent = `Лобби создано: ${lobbyId}`;
-  if (isOwner) {
-    const link = `${window.location.origin}?lobby=${lobbyId}`;
-    inviteBox.innerHTML = `<p>Ссылка для друга: <a href="${link}">${link}</a></p>`;
-  }
+  const link = `${window.location.origin}?r=${lobbyId}`;
+  inviteBox.innerHTML = `<p>Ссылка для друга: <a href="${link}">${link}</a></p>`;
 
   mouseX = window.innerWidth / 2;
   localPreviewX = window.innerWidth / 2;
@@ -117,22 +143,17 @@ socket.on('lobbyCreated', ({ lobbyId, isOwner }) => {
   }, 100);
 });
 
-socket.on('joinedLobby', ({ lobbyId, isOwner }) => {
+socket.on('joinedLobby', ({ lobbyId }) => {
   console.log('joined');
   currentLobbyId = lobbyId;
   infoElem.textContent = `Вы в лобби: ${lobbyId}`;
-  if (isOwner) {
-    const link = `${window.location.origin}?lobby=${lobbyId}`;
-    inviteBox.innerHTML = `<p>Ссылка для приглашения: <a href="${link}">${link}</a></p>`;
-    document.getElementById('gameUI').classList.add('leftSide');
-    mouseX = window.innerWidth / 4;
-    localPreviewX = window.innerWidth / 4;
-  } else {
-    inviteBox.innerHTML = '';
-    document.getElementById('gameUI').classList.add('rightSide');
-    mouseX = (3 * window.innerWidth) / 4;
-    localPreviewX = (3 * window.innerWidth) / 4;
-  }
+ 
+  inviteBox.innerHTML = '';
+  document.getElementById('gameUI').classList.add('rightSide');
+  mouseX = (3 * window.innerWidth) / 4;
+  localPreviewX = (3 * window.innerWidth) / 4;
+  wordInputPlayer.setCoords({ x: (3 * window.innerWidth) / 4 });
+  createWordInputEnemy(true);
 });
 
 socket.on('lobbyClosed', ({ message }) => {
@@ -143,11 +164,23 @@ socket.on('lobbyClosed', ({ message }) => {
 socket.on('joinError', (msg) => { infoElem.textContent = `Ошибка: ${msg}`; });
 
 socket.on('playerJoined', ({ playerId }) => {
+  wordInputPlayer.value = '';
+  wordInputPlayer.setCoords({ x: window.innerWidth / 4 });
   console.log('Другой игрок:', playerId);
-  createOpponentTypingElem();
+  joinedPlayerId = playerId;
+  createWordInputEnemy(false);
 });
 
-socket.on('spawnError', ({ message }) => { alert('spawnError: ' + message); });
+socket.on('playerLeaved', (msg) => {
+  wordInputPlayer.setCoords({ x: window.innerWidth / 2 });
+  console.log('Игрок вышел:');
+  joinedPlayerId = null;
+  wordInputEnemy.destroy();
+});
+
+socket.on('spawnError', ({ message }) => {
+  wordInputPlayer.setUserInput(true);
+});
 
 socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playerCount }) => {
   console.log('itemSpawned:', itemId, word, sprite);
@@ -164,7 +197,6 @@ socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playe
       localPreviewX = (3 * window.innerWidth) / 4;
     }
   }
-
   startMouseFollow();
 });
 
@@ -351,14 +383,14 @@ function stopMouseFollow() {
   currentPreviewItemId = null;
 }
 
-function createOpponentTypingElem() {
-  if (!opponentTypingElem) {
-    opponentTypingElem = document.createElement('div');
-    opponentTypingElem.id = 'opponentTyping';
-    opponentTypingElem.style.color = 'yellow';
-    opponentTypingElem.style.marginTop = '10px';
-    console.log(opponentTypingElem);
-    document.getElementById('gameUI').appendChild(opponentTypingElem);
+function createWordInputEnemy(isOwner) {
+  if (!wordInputEnemy) {
+    wordInputEnemy = new ArcWordInput({
+      app,
+      x: isOwner ? window.innerWidth / 4 : (3 * window.innerWidth) / 4,
+      y: 100,
+      userInput: false,
+    });
   }
 }
 
