@@ -4,6 +4,16 @@
   <meta charset="utf-8" />
   <title>Suika + Pixi.js Demo</title>
   <style>
+    @font-face {
+      font-family: 'Nunito'; 
+      src: url(fonts/Nunito.ttf); 
+    }
+
+    @font-face {
+      font-family: 'SpelltyperNumber'; 
+      src: url(fonts/Spelltyper-numbers.ttf); 
+    }
+
     /* Убираем отступы, растягиваем body/html */
     html, body {
       margin: 0;
@@ -25,6 +35,8 @@
 
     /* UI панель слева, поверх канваса */
     #gameUI {
+      font-family: 'Nunito';
+      font-weight: 600;
       position: absolute;
       top: 0; left: 0;
       width: 250px; /* ширина панели */
@@ -32,6 +44,29 @@
       padding: 10px;
       z-index: 10; /* выше канваса */
       box-sizing: border-box;
+    }
+
+    .ui-stats-container {
+      color: white;
+    }
+
+    .spawn-counter-dots-container {
+      display: flex; /* или inline-flex */
+      gap: 4px;      /* промежуток между точками */
+    }
+    .spawn-counter-dots-container.hidden {
+      display: none;
+    }
+
+    .spawn-counter-dots {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: gray; /* неактивный (серый) */
+    }
+
+    .spawn-counter-dots.spawn-active {
+      background-color: yellow; /* активный (желтый) */
     }
 
     /* Пример стиля текста/кнопок */
@@ -46,13 +81,8 @@
 <body>
   <!-- Панель слева -->
   <div id="gameUI">
-    <h3>Suika + Pixi</h3>
     <p id="info">Загрузка...</p>
     <div id="inviteBox"></div>
-
-    <p>
-      <small>Предмет появляется и двигается за курсором, клик => «роняем».</small>
-    </p>
   </div>
 
   <!-- Контейнер для Pixi (canvas будет внутри) -->
@@ -65,6 +95,7 @@
   <script src="https://pixijs.download/release/pixi.js"></script>
 
   <!-- Наш клиентский код -->
+  <script type="module" src="uistats.js"></script>
   <script type="module" src="effects.js"></script>
   <script type="module" src="client.js"></script>
 </body>

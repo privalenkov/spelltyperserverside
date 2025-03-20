@@ -715,13 +715,19 @@ function handleCollisions(lobbyId, event) {
           // Чтобы каждый видел и свои, и чужие
           // Сделаем объект scoresForAll: { socketId1: number, socketId2: number }
           const scoresForAll = {};
+          const pointsGainedForAll = {};
           for (const pid of lobby.players) {
             scoresForAll[pid] = lobby.scores[pid] || 0;
+            pointsGainedForAll[pid] = 0;
+          }
+
+          if (scoringSocketId) {
+            pointsGainedForAll[scoringSocketId] = totalPoints;
           }
 
           io.to(lobbyId).emit('scoreUpdated', {
             scoringPlayer: scoringSocketId || null,
-            pointsGained: totalPoints,
+            pointsGained: pointsGainedForAll,
             scores: scoresForAll  // все очки
           });
         }
