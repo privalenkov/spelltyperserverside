@@ -19,8 +19,10 @@ export class UIStats {
 
     // Внутреннее "отображаемое" значение счёта
     this.displayScore = 0;
-    // Очередь прибавляемых очков (старые первыми)
     this.pointsQueue = []; // [{amount, domNode}, ...]
+    this.previousSpawnCounters = 0;
+
+    this._colors = ['#E6B925', '#654cff', '#8DC5F2'];
 
     // Создаём корневой DOM
     this.root = document.createElement('div');
@@ -33,27 +35,31 @@ export class UIStats {
     // 1) spawn-counter-dots-container
     this.spawnContainer = document.createElement('div');
     this.spawnContainer.classList.add('spawn-counter-dots-container');
-    if (this.spawnCounterIsHidden) {
-      this.spawnContainer.classList.add('hidden')
-    } else {
-      this.spawnContainer.classList.remove('hidden')
-    }
+    this.spawnContainer.classList.toggle('hidden', spawnCounterIsHidden);
     this.root.insertBefore(this.spawnContainer, this.root.firstChild);
 
-    this.spawnDots = [];
-    for (let i = 0; i < 5; i++) {
+    this.spawnDots = Array.from({ length: 5 }, () => {
       const dot = document.createElement('div');
-      dot.classList.add('spawn-counter-dots'); 
-      // CSS .spawn-counter-dots { width:10px; height:10px; background:gray; ... }
-      // Если «активный», добавим класс spawn-active => background: yellow 
+      dot.classList.add('spawn-counter-dots');
+      dot.style.opacity = '0.5';
+      dot.style.backgroundColor = 'white';
       this.spawnContainer.appendChild(dot);
-      this.spawnDots.push(dot);
-    }
+      return dot;
+    });
 
     // 2) score-container
     this.scoreContainer = document.createElement('div');
     this.scoreContainer.classList.add('score-container');
     this.root.appendChild(this.scoreContainer);
+
+
+    // 2.3) Текст «Комбо»
+    this.comboText = document.createElement('div');
+    this.comboText.classList.add('combo-text');
+    this.comboText.style.opacity = '0';
+    this.comboText.style.position = 'relative';
+    this.comboText.textContent = '';
+    this.scoreContainer.appendChild(this.comboText);
 
     // 2.1) score-text
     this.scoreText = document.createElement('div');
@@ -66,7 +72,9 @@ export class UIStats {
     this.scoreMultiplied.classList.add('score-multiplied');
     this.scoreContainer.appendChild(this.scoreMultiplied);
 
+
     // Запускаем таймер обработки очереди
+    this._requestAnimationFrameId = null;
     this._timer = setInterval(() => this.processPointsQueue(), updateInterval);
   }
 
@@ -79,140 +87,265 @@ export class UIStats {
 
   setSpawnCounterIsHidden (val) {
     this.spawnCounterIsHidden = val;
-    if (val) this.spawnContainer.classList.add('hidden');
-    else this.spawnContainer.classList.remove('hidden');
+    this.spawnContainer.classList.toggle('hidden', val);
   }
 
-  createSpawnCounter () {
-    this.spawnContainer = document.createElement('div');
-    this.spawnContainer.classList.add('spawn-counter-dots-container');
-    this.root.insertBefore(this.spawnContainer, this.root.firstChild);
+  update({spawnCounters, score, combo}) {
 
-    this.spawnDots = [];
-    for (let i = 0; i < 5; i++) {
-      const dot = document.createElement('div');
-      dot.classList.add('spawn-counter-dots'); 
-      // CSS .spawn-counter-dots { width:10px; height:10px; background:gray; ... }
-      // Если «активный», добавим класс spawn-active => background: yellow 
-      this.spawnContainer.appendChild(dot);
-      this.spawnDots.push(dot);
+    if (spawnCounters != undefined && !this.spawnCounterIsHidden) {
+      console.log(spawnCounters, this.previousSpawnCounters)
+      if (spawnCounters === 0 && this.previousSpawnCounters === 4) {
+        this.triggerSpawnDotsResetAnimation();
+      } else {
+        this.spawnDots.forEach((dot, i) => {
+          const isActive = i < spawnCounters;
+          gsap.to(dot, {
+            opacity: isActive ? 1 : 0.5,
+            scale: isActive ? 1.3 : 1,
+            backgroundColor: isActive ? '#E6B925' : 'white',
+            duration: 0.5,
+            ease: 'elastic.out(1, 0.4)'
+          });
+        });
+      }
+
+
+
+      this.previousSpawnCounters = spawnCounters;
     }
 
-    console.log(this.spawnContainer);
+    if (score?.gained != undefined && score?.gained !== 0) {
+      this.pushPoints(score.gained);
+    }
+
+    if (combo !== undefined) {
+      this.comboText.textContent = `*${combo}`;
+      gsap.fromTo(this.comboText, { opacity: 0, scale: 0.8 }, { opacity: 1, scale: 1, duration: 0.3 });
+      gsap.fromTo(this.comboText, { scale: 1.5 }, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.3)' });
+
+      this._spawnComboEffect();
+    }
   }
 
-  /**
-   * Основной метод: userStats.update({ spawnCounters, score, pointsGained, ... })
-   * Но здесь "pointsGained" не нужен напрямую – мы берём разницу (score - displayScore).
-   * score уже "приплюсован" на сервере, а мы хотим постепенно добавить на экран.
-   */
-  update(value) {
-    const {
-      spawnCounters,  // число точек
-      score,
-      // comboCounters = 0, // (если нужно)
-    } = value;
-
-    if (spawnCounters != undefined && this.spawnCounterIsHidden) {
-      let activeCount = Math.max(0, Math.min(5, spawnCounters));
+  _spawnComboEffect() {
+    const splash = document.createElement('div');
+    splash.style.position = 'absolute';
+    splash.style.left = `0px`;
+    splash.style.top = `0px`;
+    splash.style.width = `150px`; // подгони под размер изображения
+    splash.style.height = `150px`;
+    splash.style.left = '2px';
+    splash.style.top = '-55px';
+    splash.style.transform = 'rotate(30deg)';
+    splash.style.backgroundImage = `url('images/combo_splash.png')`;
+    splash.style.backgroundSize = 'contain';
+    splash.style.backgroundRepeat = 'no-repeat';
+    splash.style.pointerEvents = 'none';
+    this.comboText.appendChild(splash);
   
-      // 1) SpawnCounters => перерисовать точки
-      for (let i = 0; i < 5; i++) {
-        if (i < activeCount) {
-          this.spawnDots[i].classList.add('spawn-active');
-        } else {
-          this.spawnDots[i].classList.remove('spawn-active');
-        }
-      }
-    }
-
-    if (score != undefined) {
-      // 2) Score:
-      // реальная "итоговая" score на сервере. Но у нас "displayScore" (старое).
-      const difference = score - this.displayScore;
-      console.log(difference, 'difference');
-      if (difference > 0) {
-        // Если реально повысился (server has new total),
-        // "откатываем" UI: -> keep UI as old (do nothing with .scoreText),
-        //  => добавим difference в queue
-        this.pushPoints(difference);
-      } else if (difference < 0) {
-        // Теоретически, если score вдруг уменьшился? 
-        // Логика: пусть UI сразу перепрыгнет (или игнорировать)
-        // Для примера тут перепрыгнем:
-        this.displayScore = score;
-        this.scoreText.textContent = String(this.displayScore);
-        // Очистим очередь, т.к. уже не актуально
-        this.clearPointsQueue();
-      }
-      // если difference===0 => ничего не делаем
-    }
-
-
+    // Анимация появления и исчезновения
+    const tl = gsap.timeline();
+    tl.set(splash, {
+      opacity: 0,
+    });
+    tl.to(splash, {
+      opacity: 1,
+      scale: 1.2,
+      duration: .5,
+    });
+    tl.to(splash, {
+      opacity: 0,
+      duration: .5,
+      ease: 'back.out(1)'
+    });
   }
 
-  /**
-   * Добавляем разницу (новые очки) в очередь, делаем новый <div> +N.
-   * При "сверху старые, снизу новые" — мы хотим,
-   * чтобы свежий +N вставлялся в конец, тогда "старые" будут в начале.
-   */
-  pushPoints(amount) {
-    // Создаём div
+  triggerSpawnDotsResetAnimation() {
+    const tl = gsap.timeline();
+    tl.set(this.spawnDots, { backgroundColor: '#E6B925', scale: 1.3, opacity: 1 });
+    tl.to(this.spawnDots, {
+      scale: 2,
+      duration: 0.5,
+      ease: 'elastic.in(1, 0.5)',
+      yoyo: true,
+      repeat: 1,
+      repeatDelay: 0,
+    });
+    this.spawnDots.slice().reverse().forEach((dot) => {
+      tl.to(dot, {
+        opacity: 0.5,
+        scale: 1,
+        backgroundColor: 'white',
+        duration: 0.3,
+        ease: 'elastic.in(1, 0.3)'
+      }, `>-0.2`);
+    });
+  }
+
+  handleComboApplied({ newScore, multiplier }) {
+    const preComboScore = newScore / multiplier;
+    this.pendingCombo = { 
+      newScore, 
+      multiplier, 
+      preComboScore
+    };
+  }
+
+  updatePointsQueueOpacity() {
+    const totalPoints = this.pointsQueue.length;
+    this.pointsQueue.forEach((point, index) => {
+      const opacityValue = 1 - (index / totalPoints) * 0.7;
+      gsap.to(point.domNode, { opacity: opacityValue, duration: 0.3 });
+    });
+  }
+
+  repositionPointsQueue() {
+    this.pointsQueue.forEach((item, index) => {
+      gsap.to(item.domNode, { 
+        top: `${index * 20}px`, // плавно смещаем по вертикали
+        duration: 0.3, 
+        ease: 'power1.out' 
+      });
+    });
+  }
+
+  _spawnParticles(x, y, amount = 2, color = '#fff') {
+    const particleContainer = document.createElement('div');
+    particleContainer.style.position = 'absolute';
+    particleContainer.style.left = `${x}px`;
+    particleContainer.style.top = `${y}px`;
+    particleContainer.style.pointerEvents = 'none';
+    this.root.appendChild(particleContainer);
+  
+    const offset = 20; // расстояние от центра для старта партиклов
+  
+    for (let side of [-1, 1]) { // -1 слева, 1 справа
+      for (let i = 0; i < amount / 2; i++) {
+        const particle = document.createElement('div');
+        particle.style.position = 'absolute';
+        particle.style.width = '10px';
+        particle.style.height = '40px';
+        particle.style.backgroundColor = color;
+        particle.style.borderRadius = '100px';
+        particleContainer.appendChild(particle);
+  
+        // Угол: ±45° от горизонтали
+        const angle = side === -1
+          ? Math.PI + (Math.random() - 0.5) * (Math.PI / 4)
+          : (Math.random() - 0.5) * (Math.PI / 4);
+  
+        const distance = 50 + Math.random() * 60;
+  
+        const targetX = Math.cos(angle) * distance;
+        const targetY = Math.sin(angle) * distance;
+  
+        const rotationAngle = angle * (180 / Math.PI) + 90;
+        gsap.set(particle, { rotation: rotationAngle });
+  
+        gsap.fromTo(particle,
+          { x: side * offset, y: 0, scale: 1, opacity: 1 },
+          {
+            x: targetX + side * offset,
+            y: targetY,
+            scale: 0.5,
+            duration: 0.7,
+            ease: 'expo.out',
+            onStart: () => {
+              gsap.to(particle, {opacity: 0, duration: 0.4, onComplete: () => particle.remove()});
+            }
+          }
+        );
+      }
+    }
+  
+    setTimeout(() => particleContainer.remove(), 1500);
+  }
+
+  pushPoints(gained) {
+    const randomColor = this._colors[Math.floor(Math.random() * this._colors.length)];
     const plusDiv = document.createElement('div');
-    plusDiv.textContent = `+${amount}`;
-    // Вставляем "самые старые - сверху" => appendChild => новые снизу
+    plusDiv.textContent = `+${gained}`;
+    plusDiv.style.opacity = '0';
+    plusDiv.style.color = randomColor;
+    plusDiv.style.position = 'absolute';
+    plusDiv.style.top = `${this.pointsQueue.length * 35}px`;
     this.scoreMultiplied.appendChild(plusDiv);
+    this.pointsQueue.push({ gained, domNode: plusDiv });
+    this.updatePointsQueueOpacity();
 
-    // В массив
-    this.pointsQueue.push({ amount, domNode: plusDiv });
+    gsap.to(plusDiv, { opacity: 1, x: +10, duration: 0.4, ease: 'back.out(1.7)' });
   }
 
-  /**
-   * Каждую секунду (setInterval) берём самый старый (pointsQueue[0]),
-   * добавляем к displayScore, удаляем из DOM, убираем из массива.
-   * "Сверху старые" => значит shift().
-   */
-  processPointsQueue() {
-    if (this.pointsQueue.length === 0) {
-      return; // ничего нет
-    }
-    // Берём старейший
-    const oldest = this.pointsQueue[0];
-    // Прибавляем
-    this.displayScore += oldest.amount;
-    // Обновляем score-text
-    this.scoreText.textContent = String(this.displayScore);
-
-    // Удаляем domNode
-    if (oldest.domNode.parentNode === this.scoreMultiplied) {
-      this.scoreMultiplied.removeChild(oldest.domNode);
-    }
-    // Убираем из массива
-    this.pointsQueue.shift();
-  }
-
-  /**
-   * Очистить всю очередь
-   */
-  clearPointsQueue() {
-    // Убираем все +N с экрана
-    for (const item of this.pointsQueue) {
-      if (item.domNode.parentNode === this.scoreMultiplied) {
-        this.scoreMultiplied.removeChild(item.domNode);
-      }
-    }
+  clear() {
+    this.displayScore = 0;
+    this.scoreText.textContent = '0';
+    this.comboText.textContent = '';
+    this.pointsQueue.forEach(({ domNode }) => domNode.remove());
     this.pointsQueue = [];
+  }
+
+  animateScoreIncrement(targetScore) {
+    gsap.to(this, {
+      displayScore: targetScore,  // плавно меняем значение displayScore до targetScore
+      duration: 0.5,
+      ease: 'power1.out',         // плавность
+      roundProps: 'displayScore', // автоматически округляет число
+      onUpdate: () => {
+        this.scoreText.textContent = String(this.displayScore);
+        gsap.fromTo(this.scoreText, { scale: 1.3 }, { scale: 1, duration: 0.3, ease: 'elastic.out(1, 0.3)' });
+      },
+      onStart: () => {
+        gsap.fromTo(this.scoreText, { scale: 1.3 }, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.5)' });
+      }
+    });
+  }
+
+  processPointsQueue() {
+    if (this.pendingCombo && this.displayScore === this.pendingCombo.preComboScore) {
+      this.displayScore = this.pendingCombo.newScore;
+      gsap.fromTo(this.scoreText, { scale: 1.5 }, { scale: 1, duration: 0.5, ease: 'elastic.out(1, 0.3)' });
+      this.scoreText.textContent = String(this.displayScore);
+      this.pendingCombo = null;
+      
+      gsap.to(this.comboText, { opacity: 0, duration: 0.5, delay: 0.3 });
+
+      const rect = this.scoreText.getBoundingClientRect();
+      const rootRect = this.root.getBoundingClientRect();
+
+      const x = rect.left - rootRect.left + rect.width / 2;
+      const y = rect.top - rootRect.top + rect.height / 2 - 20;
+      this._spawnParticles(x, y, 3, '#9BB7FF');
+    }
+
+    if (this.pointsQueue.length > 0) {
+      // Берём и прибавляем очередной элемент
+      const oldest = this.pointsQueue.shift();
+      oldest.domNode && gsap.to(oldest.domNode, {
+        opacity: 0, y: -20, duration: 0.3, onComplete: () => {
+          oldest.domNode.remove();
+          this.repositionPointsQueue();
+        }
+      });
+      const targetScore = this.displayScore + oldest.gained;
+      this.animateScoreIncrement(targetScore);
+      this.updatePointsQueueOpacity();
+
+      // 👇 запускаем партиклы при добавлении очков
+      const rect = this.scoreText.getBoundingClientRect();
+      const rootRect = this.root.getBoundingClientRect();
+
+      const x = rect.left - rootRect.left + rect.width / 2;
+      const y = rect.top - rootRect.top;
+      this._spawnParticles(x, y);
+    }
   }
 
   /**
    * Уничтожить UI
    */
   destroy() {
-    // Останавливаем таймер
+    cancelAnimationFrame(this._requestAnimationFrameId);
     clearInterval(this._timer);
-
-    if (this.root && this.root.parentNode) {
-      this.root.parentNode.removeChild(this.root);
-    }
+    this.root.remove();
   }
 }

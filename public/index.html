@@ -48,20 +48,63 @@
 
     .ui-stats-container {
       color: white;
+      width: 250px;
+      display: grid;
+      justify-items: flex-end;
+      user-select: none;
+      pointer-events: none;
     }
 
-    .spawn-counter-dots-container {
-      display: flex; /* или inline-flex */
-      gap: 4px;      /* промежуток между точками */
+    .score-container {
+      font-family: 'SpelltyperNumber';
+      font-size: 70px;
+      text-align: end;
+      letter-spacing: 4px;
+      word-break: break-all;
     }
+
+    .combo-text {
+      font-size: 40px;
+      height: 32px;
+      color: #9BB7FF;
+    }
+
+    .score-text {
+      height: 70px;
+    }
+
+    .score-multiplied {
+      font-size: 40px;
+      margin-top: 10px;
+      position: relative; /* родитель */
+      right: 0;
+      width: 100px;
+      height: 300px;
+    }
+
+    .score-multiplied div {
+      position: absolute;
+      right: 0;
+      white-space: nowrap;  /* 👈 предотвращает перенос текста на новую строку */
+      width: 100%;          /* 👈 добавь ширину, чтобы текст не сжимался */
+      text-align: right;     /* 👈 выравнивание по левому краю (по желанию) */
+    }
+
     .spawn-counter-dots-container.hidden {
       display: none;
     }
 
+    .spawn-counter-dots-container {
+      display: flex;
+      gap: 10px;
+      margin-right: 6px;
+      margin-bottom: 41px;
+    }
+
     .spawn-counter-dots {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      border-radius: 40%;
       background-color: gray; /* неактивный (серый) */
     }
 
@@ -91,6 +134,7 @@
   <!-- Подключаем Socket.IO -->
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
+
   <!-- Подключаем Pixi.js (через CDN) -->
   <script src="https://pixijs.download/release/pixi.js"></script>
 

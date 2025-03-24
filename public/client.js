@@ -21,7 +21,12 @@ const socket = window.io(); // глобальный io, т.к. < src="/socket.io
 // Pixi (v8) — создаём, инициализируем
 const app = new PIXI.Application();
 // В newer Pixi 8, требуется await app.init(...):
-await app.init({ width: window.innerWidth, height: window.innerHeight });
+await app.init({
+  resizeTo: window,
+  resolution: window.devicePixelRatio,
+  autoDensity: true, // авто-коррекция размеров canvas под resolution
+  antialias: true,
+});
 await PIXI.Assets.load('fonts/Spelltyper.ttf');
 
 let wordInputEnemy = null;
@@ -30,15 +35,13 @@ const wordInputPlayer = new ArcWordInput({
   x: 100,
   y: 100,
   onValue: (val) => {
-    // console.log("Value changed:", val);
     if (!currentLobbyId) return;
     socket.emit('typingWord', {
       lobbyId: currentLobbyId,
       word: val,
     });
   },
-  onComplete: (val) => {
-    console.log("User pressed Enter with word:", val);
+  onComplete: (val, cb) => {
     // arcInput1.destroy();
     if (!currentLobbyId) {
       alert('Вы не в лобби');
@@ -46,7 +49,9 @@ const wordInputPlayer = new ArcWordInput({
     }
     const typedWord = val.trim();
     if (!typedWord) return alert('Введите слово!');
-    socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord });
+    socket.emit('spawnItemByWord', { lobbyId: currentLobbyId, typedWord }, (bool) => {
+      cb(bool);
+    });
     wordInputPlayer.setUserInput(false);
   }
 });
@@ -54,8 +59,8 @@ const wordInputPlayer = new ArcWordInput({
 
 let uiStatsEnemy = null;
 const uiStatsPlayer = new UIStats({
-  x: window.innerWidth / 2,
-  y: 200,
+  x: window.innerWidth / 2 - 450,
+  y: 250,
 })
 
 // setInterval(() => {
@@ -123,18 +128,16 @@ const urlParams = new URLSearchParams(window.location.search);
 const paramLobbyId = urlParams.get('r');
 
 if (paramLobbyId) {
-  console.log('test3');
   isLobbyOwner = false;
   socket.emit('joinLobby', { lobbyId: paramLobbyId });
   infoElem.textContent = `Connecting...: ${paramLobbyId}...`;
   wordInputPlayer.setCoords({ x: (3 * window.innerWidth) / 4 });
   uiStatsPlayer.setSpawnCounterIsHidden(false);
-  uiStatsPlayer.setCoords({ x: (3 * window.innerWidth) / 4 });
+  uiStatsPlayer.setCoords({ x: (3 * window.innerWidth) / 4 - 350 });
 } else {
-  console.log('test2');
   isLobbyOwner = true;
   wordInputPlayer.setCoords({ x: window.innerWidth / 2 });
-  uiStatsPlayer.setCoords({ x: window.innerWidth / 2 });
+  uiStatsPlayer.setCoords({ x: window.innerWidth / 2 - 450 });
   socket.emit('autoCreateLobby');
   infoElem.textContent = 'Creating room...';
 }
@@ -156,7 +159,6 @@ socket.on('lobbyCreated', ({ lobbyId }) => {
 });
 
 socket.on('joinedLobby', ({ lobbyId }) => {
-  console.log('joined');
   currentLobbyId = lobbyId;
   infoElem.textContent = `You are in room: ${lobbyId}`;
  
@@ -170,20 +172,21 @@ socket.on('joinedLobby', ({ lobbyId }) => {
 });
 
 socket.on('lobbyClosed', ({ message }) => {
-  alert(message);
   window.location.href = '/';
 });
 
-socket.on('joinError', (msg) => { infoElem.textContent = `Ошибка: ${msg}`; });
+socket.on('joinError', (msg) => { 
+  infoElem.textContent = `Ошибка: ${msg}`;
+  window.location.href = '/';
+});
 
 socket.on('playerJoined', ({ playerId }) => {
   wordInputPlayer.value = '';
   wordInputPlayer.setCoords({ x: window.innerWidth / 4 });
   uiStatsPlayer.setSpawnCounterIsHidden(false);
   uiStatsPlayer.setCoords({
-    x: window.innerWidth / 4,
+    x: window.innerWidth / 4 - 350,
   });
-  console.log('Другой игрок:', playerId);
   joinedPlayerId = playerId;
   createWordInputEnemy(false);
   createUIStatsEnemy(false);
@@ -192,13 +195,14 @@ socket.on('playerJoined', ({ playerId }) => {
 socket.on('playerLeaved', (msg) => {
   wordInputPlayer.setCoords({ x: window.innerWidth / 2 });
   uiStatsPlayer.setCoords({
-    x: window.innerWidth / 2,
+    x: window.innerWidth / 2 - 450,
   });
   uiStatsPlayer.setSpawnCounterIsHidden(true);
-  console.log('Игрок вышел:');
   joinedPlayerId = null;
   wordInputEnemy.destroy();
   uiStatsEnemy.destroy();
+  wordInputEnemy = null;
+  uiStatsEnemy = null;
 });
 
 socket.on('spawnError', ({ message }) => {
@@ -206,7 +210,6 @@ socket.on('spawnError', ({ message }) => {
 });
 
 socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playerCount }) => {
-  console.log('itemSpawned:', itemId, word, sprite);
   currentPreviewItemId = itemId;
 
   mouseX = window.innerWidth / 2;
@@ -328,24 +331,25 @@ socket.on('stateUpdate', async (objects) => {
   }
 });
 
-socket.on('itemCombined', async ({ oldA, oldB, newId, newWord, newRarity, sprite }) => {
-    console.log('itemCombined:', oldA, oldB, '->', newId, newWord, sprite);
-});
+// socket.on('itemCombined', async ({ oldA, oldB, newId, newWord, newRarity, sprite }) => {
+//     console.log('itemCombined:', oldA, oldB, '->', newId, newWord, sprite);
+// });
 
 socket.on('scoreUpdated', ({ scoringPlayer, pointsGained, scores }) => {
   // "scores" содержит очки всех игроков
   // "scoringPlayer" — кто получил pointsGained
   console.log('scoreUpdated:', scoringPlayer, pointsGained, scores);
   uiStatsPlayer.update({
-    score: scores[socket.id],
-    pointsGained: pointsGained[socket.id],
+    score: {
+      gained: pointsGained[socket.id]
+    },
   });
-  console.log(scores);
   if (uiStatsEnemy) {
     const opponentId = Object.keys(scores).find(id => id !== socket.id);
     uiStatsEnemy.update({
-      score: scores[opponentId],
-      pointsGained: pointsGained[opponentId]
+      score: {
+        gained: pointsGained[opponentId]
+      },
     })
   }
   // Отрисуйте/обновите UI, например:
@@ -353,7 +357,6 @@ socket.on('scoreUpdated', ({ scoringPlayer, pointsGained, scores }) => {
 });
 
 socket.on('gameOver', (data) => {
-  console.log(data);
   gameOverHappened = true;
   startLocalSlowMotion(() => {
     removeItemsOneByOne(() => {
@@ -362,7 +365,6 @@ socket.on('gameOver', (data) => {
           const nickname = prompt('Поздравляю, вы установили новый рекорд! Введите ваш ник, чтобы сохранить его на доске почета');
           if (nickname && nickname.trim() !== '') {
             // Отправляем на сервер
-            console.log('to server', nickname, currentLobbyId)
             socket.emit('submitNickname', { lobbyId: currentLobbyId, nickname });
             window.location.href = '/';
           }
@@ -374,7 +376,6 @@ socket.on('gameOver', (data) => {
 });
 
 socket.on('spawnCounters', (counters) => {
-  console.log('spawnCounters:', socket.id, counters);
   combinationCounters = counters;
   uiStatsPlayer.update({
     spawnCounters: counters[socket.id]
@@ -389,38 +390,35 @@ socket.on('spawnCounters', (counters) => {
 });
 
 socket.on('comboCounters', (counters) => {
-  const myCombo = counters[socket.id] || 0;
-  const opponentId = Object.keys(counters).find(id => id !== socket.id);
-  const opponentCombo = counters[opponentId] || 0;
+  // const myCombo = counters[socket.id] || 0;
+  // const opponentId = Object.keys(counters).find(id => id !== socket.id);
+  // const opponentCombo = counters[opponentId] || 0;
 
-  console.log(myCombo, opponentCombo);
+  uiStatsPlayer.update({
+    combo: counters[socket.id]
+  });
 });
 
 socket.on('comboApplied', ({ socketId, multiplier, newScore }) => {
   if (socketId === socket.id) {
     console.log(`Ваше комбо ×${multiplier}! Новый счёт: ${newScore}`);
+    uiStatsPlayer.handleComboApplied({ multiplier, newScore})
   } else {
+    if (uiStatsEnemy) uiStatsEnemy.handleComboApplied({multiplier, newScore});
     console.log(`Комбо противника ×${multiplier}! Его новый счёт: ${newScore}`);
   }
 });
 
 socket.on('gameRestarted', (data) => {
-  gameOverHappened = false;
   console.log('gameRestarted');
-  uiStatsPlayer.update({
-    score: 0,
-    spawnCounters: 0
-  });
+  gameOverHappened = false;
+  uiStatsPlayer.clear();
   if (uiStatsEnemy) {
-    uiStatsEnemy.update({
-      score: 0,
-      spawnCounters: 0
-    });
+    uiStatsEnemy.clear();
   }
 });
 
 socket.on('leaderboardUpdated', ({ leaderboard }) => {
-  console.log('New Top 5:', leaderboard);
   leaderboardData = [...leaderboard]
   // Пример: обновить DOM-элемент 
   // updateLeaderboardUI(leaderboard);
@@ -451,8 +449,8 @@ function createWordInputEnemy(isOwner) {
 function createUIStatsEnemy(isOwner) {
   if (!uiStatsEnemy) {
     uiStatsEnemy = new UIStats({
-      x: isOwner ? window.innerWidth / 4 : (3 * window.innerWidth) / 4,
-      y: 200,
+      x: isOwner ? window.innerWidth / 4 - 350 : (3 * window.innerWidth) / 4 - 350,
+      y: 250,
       spawnCounterIsHidden: false
     });
   }

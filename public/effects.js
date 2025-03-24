@@ -83,7 +83,6 @@ export class ArcWordInput {
   }
 
   setCoords({ x, y }) {
-    console.log('x', x);
     this.x = x || this.x;
     this.y = y || this.y;
     this.rootContainer.x = this.x;
@@ -138,14 +137,80 @@ export class ArcWordInput {
     }
   }
 
+  _correctWord() {
+    this._isAnimated = true;
+    const durationCollapse = 0.2;
+  
+    this.typedLetters.forEach((obj, i) => {
+      const arcC = obj.arcContainer;
+  
+      gsap.to(arcC.scale, {
+        duration: durationCollapse,
+        x: 0,
+        ease: 'back.in(1.5)',
+        delay: i * 0.08
+      });
+  
+      gsap.to(arcC, {
+        duration: durationCollapse,
+        alpha: 0,
+        x: 0,
+        ease: 'power1.out(1)',
+        delay: i * 0.08,
+        onComplete: () => {
+          // Когда последняя буква исчезла
+          if (i === this.typedLetters.length - 1) {
+            this.clear();
+            this._isAnimated = false;
+          }
+        }
+      });
+    });
+  }
+
+  _wrongWord() {
+    this._isAnimated = true;
+    const durationCollapse = 0.2;
+  
+    this.typedLetters.forEach((obj, i) => {
+      const arcC = obj.arcContainer;
+  
+      gsap.to(arcC.scale, {
+        duration: durationCollapse,
+        y: 2,
+        ease: 'back.in(2)',
+        delay: i * 0.1
+      });
+  
+      gsap.to(arcC, {
+        duration: durationCollapse,
+        alpha: 0,
+        y: 0,
+        ease: 'power1.out(1)',
+        delay: i * 0.1,
+        onComplete: () => {
+          // Когда последняя буква исчезла
+          if (i === this.typedLetters.length - 1) {
+            this.clear();
+            this._isAnimated = false;
+          }
+        }
+      });
+    });
+  }
+
   handleKeyDown(e) {
-    console.log(this.userInput, this._isAnimated);
     if (!this.userInput || this._isAnimated) return;
 
     if (e.key === 'Enter') {
-      // Завершить ввод
-      this.onComplete(this._value);
-      this._lettersBounceDownAndClear();
+      this.onComplete(this._value, (wordExists) => {
+        console.log(wordExists);
+        if (wordExists) {
+          this._correctWord();
+        } else {
+          this._wrongWord();
+        }
+      });
       return;
     }
     if (e.key === 'Backspace') {
@@ -195,7 +260,6 @@ export class ArcWordInput {
     const totalW = this._computeTotalWidth();
 
     let currentX = - totalW / 2;
-    console.log(currentX);
     const mid = (count -1)/2;
 
     
@@ -254,38 +318,38 @@ export class ArcWordInput {
     });
   }
 
-  _lettersBounceDownAndClear() {
-    const count = this.typedLetters.length;
-    if (count===0) return;
-    this._isAnimated = true;
+  // _wrongWord() {
+  //   const count = this.typedLetters.length;
+  //   if (count===0) return;
+  //   this._isAnimated = true;
     
-    const duration = .15;    // время падения
-    const delayBetween = 0.1; // задержка между буквами
-    // Будем делать случайный dx (горизонтальный), и dy "побольше" вниз
-    this.typedLetters.forEach((obj, i) => {
-      const arcC = obj.arcContainer;
-      gsap.killTweensOf(arcC);
+  //   const duration = .15;    // время падения
+  //   const delayBetween = 0.1; // задержка между буквами
+  //   // Будем делать случайный dx (горизонтальный), и dy "побольше" вниз
+  //   this.typedLetters.forEach((obj, i) => {
+  //     const arcC = obj.arcContainer;
+  //     gsap.killTweensOf(arcC);
 
-      // Случайный отскок
-      const dx = (Math.random()-0.5)*2 * 20;   // ±200 влево/вправо
-      const dy = 30;       // 300..600 вниз
+  //     // Случайный отскок
+  //     const dx = (Math.random()-0.5)*2 * 20;   // ±200 влево/вправо
+  //     const dy = 30;       // 300..600 вниз
 
-      gsap.to(arcC, {
-        delay: i*delayBetween,
-        duration,
-        x: arcC.x + dx,
-        y: arcC.y + dy,
-        alpha: 0,
-        onComplete: () => {
-          // Когда последняя буква закончила:
-          if (i===count-1) {
-            this.clear();
-            this._isAnimated = false;
-          }
-        }
-      });
-    });
-  }
+  //     gsap.to(arcC, {
+  //       delay: i*delayBetween,
+  //       duration,
+  //       x: arcC.x + dx,
+  //       y: arcC.y + dy,
+  //       alpha: 0,
+  //       onComplete: () => {
+  //         // Когда последняя буква закончила:
+  //         if (i===count-1) {
+  //           this.clear();
+  //           this._isAnimated = false;
+  //         }
+  //       }
+  //     });
+  //   });
+  // }
 
   // Уничтожаем компонент
   destroy() {

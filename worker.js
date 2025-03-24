@@ -656,27 +656,14 @@ function handleCollisions(lobbyId, event) {
             if (lobby.spawnCounters[ownerId] >= 5) {
               lobby.spawnCounters[ownerId] = 0;
               spawnRandomItemForOpponent(lobby, ownerId);
-              
             }
 
             sendSpawnCounters(lobbyId);
           }
 
-          const ownerId = itemA.ownerId || itemB.ownerId;
-          if (!ownerId) return;
+          //dd
+          comboSystem(itemA, itemB, lobby, lobbyId);
 
-          // Увеличиваем счетчик комбо игрока
-          lobby.comboCounters[ownerId] = (lobby.comboCounters[ownerId] || 0) + 1;
-
-          // Перезапускаем таймер комбо
-          clearTimeout(lobby.comboTimers?.[ownerId]);
-          if (!lobby.comboTimers) lobby.comboTimers = {};
-
-          lobby.comboTimers[ownerId] = setTimeout(() => {
-            applyComboMultiplier(lobbyId, ownerId);
-          }, 3000); // 3 секунды на комбо
-
-          sendComboCounters(lobbyId);
 
           // ========== Подсчёт очков ==========
           // Найдём rarity для itemA, itemB
@@ -734,6 +721,24 @@ function handleCollisions(lobbyId, event) {
       }
     }
   }
+}
+
+function comboSystem(itemA, itemB, lobby, lobbyId) {
+  const ownerId = itemA.ownerId || itemB.ownerId;
+  if (!ownerId) return;
+
+  // Увеличиваем счетчик комбо игрока
+  lobby.comboCounters[ownerId] = (lobby.comboCounters[ownerId] || 0) + 1;
+
+  // Перезапускаем таймер комбо
+  clearTimeout(lobby.comboTimers?.[ownerId]);
+  if (!lobby.comboTimers) lobby.comboTimers = {};
+
+  lobby.comboTimers[ownerId] = setTimeout(() => {
+    applyComboMultiplier(lobbyId, ownerId);
+  }, 3000); // 3 секунды на комбо
+
+  sendComboCounters(lobbyId);
 }
 
 function getBodyId(lobby, body) {
@@ -900,19 +905,21 @@ io.on('connection', (socket) => {
   });
 
   // Игрок вводит слово -> spawnItem
-  socket.on('spawnItemByWord', ({ lobbyId, typedWord }) => {
+  socket.on('spawnItemByWord', ({ lobbyId, typedWord }, cb) => {
     const lobby = lobbies[lobbyId];
     if (!lobby) return;
 
     if (lobby.currentPreview[socket.id]) {
       // Значит у игрока уже есть предмет, который не брошен => запрет
       socket.emit('spawnError', { message: 'Вы уже спавните предмет, бросьте сначала!' });
+      cb(false);
       return;
     }
 
     const found = mockDatabase.words.find(w => w.word === typedWord);
     if (!found) {
       socket.emit('spawnError', { message: 'Слово не найдено' });
+      cb(false);
       return;
     }
 
@@ -921,6 +928,7 @@ io.on('connection', (socket) => {
     for (const [id, itemData] of lobby.itemDataMap.entries()) {
       if (itemData.ownerId === socket.id && itemData.guid === found.guid) {
         socket.emit('spawnError', { message: 'Объект уже есть в котле' });
+        cb(false);
         return;
       };
     }
@@ -941,7 +949,7 @@ io.on('connection', (socket) => {
       }
     }
 
-    const spawnY = 100;
+    const spawnY = 150;
 
     // Создаем статический body (превью)
     const body = Matter.Bodies.circle(spawnX, spawnY, 20, {
@@ -962,6 +970,7 @@ io.on('connection', (socket) => {
       ownerId: socket.id,
     });
 
+    cb(true);
     socket.emit('itemSpawned', {
       itemId: newId,
       word: found.word,
