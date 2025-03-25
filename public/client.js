@@ -419,6 +419,7 @@ socket.on('gameRestarted', (data) => {
 });
 
 socket.on('leaderboardUpdated', ({ leaderboard }) => {
+  console.log('leader', leaderboard)
   leaderboardData = [...leaderboard]
   // Пример: обновить DOM-элемент 
   // updateLeaderboardUI(leaderboard);

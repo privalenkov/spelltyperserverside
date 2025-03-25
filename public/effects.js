@@ -234,7 +234,7 @@ export class ArcWordInput {
   }
 
 
-  _computeTotalWidth() {
+  computeTotalWidth() {
     let total = 0;
     const count = this.typedLetters.length;
     for (let i=0; i<count; i++) {
@@ -257,7 +257,7 @@ export class ArcWordInput {
 
     const ratio = Math.min(count / this.maxLetters, 1);
     const arcHeight = this.minArcHeight + (this.maxArcHeight - this.minArcHeight)*ratio;
-    const totalW = this._computeTotalWidth();
+    const totalW = this.computeTotalWidth();
 
     let currentX = - totalW / 2;
     const mid = (count -1)/2;

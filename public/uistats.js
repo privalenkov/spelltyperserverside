@@ -74,7 +74,6 @@ export class UIStats {
 
 
     // Запускаем таймер обработки очереди
-    this._requestAnimationFrameId = null;
     this._timer = setInterval(() => this.processPointsQueue(), updateInterval);
   }
 
@@ -164,22 +163,53 @@ export class UIStats {
     const tl = gsap.timeline();
     tl.set(this.spawnDots, { backgroundColor: '#E6B925', scale: 1.3, opacity: 1 });
     tl.to(this.spawnDots, {
-      scale: 2,
-      duration: 0.5,
-      ease: 'elastic.in(1, 0.5)',
-      yoyo: true,
-      repeat: 1,
-      repeatDelay: 0,
+      scale: 1.5,
+      duration: 0.25,
+      ease: 'elastic.out(1, 0.3)'
     });
-    this.spawnDots.slice().reverse().forEach((dot) => {
-      tl.to(dot, {
-        opacity: 0.5,
-        scale: 1,
-        backgroundColor: 'white',
-        duration: 0.3,
-        ease: 'elastic.in(1, 0.3)'
-      }, `>-0.2`);
-    });
+
+    this.spawnDots.slice().reverse().forEach((dot, i) => {
+      const localTL = gsap.timeline();
+      const upAngle = (Math.random() - 0.5) * Math.PI / 2; // от -45° до 45°
+      const upDistance = 20 + Math.random() * 20;
+      const upDx = Math.cos(upAngle) * upDistance;
+      const upDy = Math.sin(upAngle) * upDistance * -1;
+
+      // Падение — всегда вниз, но с отклонением в сторону
+      const downAngle = (Math.random() - 0.5) * Math.PI * 1.4; // от -60° до 60°
+      const downDistance = 35;
+      const downDx = Math.cos(downAngle) * downDistance;
+      const downDy = Math.abs(Math.sin(downAngle)) * downDistance;
+
+        // Подъём
+      // localTL.to(dot, {
+      //   x: upDx,
+      //   y: upDy,
+      //   scale: 1.5,
+      //   duration: 0.25,
+      //   ease: 'power1.out'
+      // });
+
+      // Падение
+      localTL.to(dot, {
+        x: upDx + downDx,
+        y: upDy + downDy,
+        rotation: Math.random() * 360,
+        opacity: 0,
+        duration: 0.2,
+        ease: 'power2.in',
+        onComplete: () => {
+          gsap.set(dot, { clearProps: 'all' });
+        }
+      });
+
+      tl.add(localTL, `>-0.08`); // цепочка с небольшим сдвигом между точками
+    })
+
+    // this.spawnDots.slice().forEach((dot, i) => {
+    //   tl.set(dot, { x:0, y: -5, scale: 1, rotation: 0 });
+    //   tl.to(dot, { y: 0, opacity: 0.5, backgroundColor: 'white', rotation: 0, duration: 0.1 });
+    // });
   }
 
   handleComboApplied({ newScore, multiplier }) {
@@ -300,6 +330,7 @@ export class UIStats {
     });
   }
 
+
   processPointsQueue() {
     if (this.pendingCombo && this.displayScore === this.pendingCombo.preComboScore) {
       this.displayScore = this.pendingCombo.newScore;
@@ -307,7 +338,35 @@ export class UIStats {
       this.scoreText.textContent = String(this.displayScore);
       this.pendingCombo = null;
       
-      gsap.to(this.comboText, { opacity: 0, duration: 0.5, delay: 0.3 });
+      const tl = gsap.timeline();
+      tl.to(this.comboText, {
+        y: -5,
+        x: 20,
+        scale: 1.5,
+        rotation: 20,
+        duration: .4,
+        ease: 'elastic.out(2, 0.3)'
+      });
+      tl.to(this.comboText, {
+        y: -5,
+        ease: 'back.in(1)'
+      });
+      tl.to(this.comboText, {
+        y: 40,
+        x: 10,
+        scale: .7,
+        opacity: 0,
+        duration: .8,
+        ease: 'elastic.out(1, 0.3)'
+      });
+      tl.set(this.comboText, {
+        y: 0,
+        x: 0,
+        rotation: 0,
+        scale: 1,
+        duration: .1,
+      });
+      // gsap.to(this.comboText, { opacity: 0, duration: 0.5 });
 
       const rect = this.scoreText.getBoundingClientRect();
       const rootRect = this.root.getBoundingClientRect();
@@ -315,6 +374,8 @@ export class UIStats {
       const x = rect.left - rootRect.left + rect.width / 2;
       const y = rect.top - rootRect.top + rect.height / 2 - 20;
       this._spawnParticles(x, y, 3, '#9BB7FF');
+
+      
     }
 
     if (this.pointsQueue.length > 0) {
@@ -344,7 +405,6 @@ export class UIStats {
    * Уничтожить UI
    */
   destroy() {
-    cancelAnimationFrame(this._requestAnimationFrameId);
     clearInterval(this._timer);
     this.root.remove();
   }
