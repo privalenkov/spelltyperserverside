@@ -57,6 +57,7 @@ export class ArcWordInput {
     // Храним текущее строковое значение:
     this._value = value;
     this._isAnimated = false;
+    this._offsetScale = 1;
 
     // rootContainer – Pixi.Container, где располагаем буквы
     this.rootContainer = new PIXI.Container();
@@ -89,23 +90,114 @@ export class ArcWordInput {
     this.rootContainer.y = this.y;
   }
 
+  _animateLetterFalling(oldLetters) {
+    // this._isAnimated = true;
+    if (!oldLetters) return;
+    const letterObj = oldLetters[oldLetters.length - 1];
+    const arcC = letterObj.arcContainer;
+
+    this.rootContainer.addChild(arcC);
+  
+    // Случайное смещение по X при подлёте
+    const dxUp = (Math.random() - 0.5) * 40;  // ±20
+    // Насколько поднимется вверх
+    const upDistance = 20 + Math.random() * 20; // 40..60
+  
+    // Случайное смещение при падении
+    const dxDown = (Math.random() - 0.5) * 60; // ±30
+    // Насколько упадёт вниз
+    const downDistance = 120 + Math.random() * 50; // 120..170
+  
+    // Немного кручения для живости
+    const rotAngle = Math.random() - 0.5; // ±90°
+  
+    const tl = gsap.timeline();
+  
+    // 1) Подлёт вверх и чуть в сторону
+    tl.to(arcC, {
+      duration: 0.1,
+      x: arcC.x + dxUp,
+      y: arcC.y - upDistance, // вверх => вычитаем
+      rotation: rotAngle,
+      ease: 'power1.out'
+    });
+  
+    // 2) Падение вниз и чуть сильнее в сторону, с fade out
+    tl.to(arcC, {
+      duration: 0.2,
+      x: `+=${dxDown}`,      //  добавляем ещё смещение
+      y: `+=${downDistance}`, //  вниз => прибавляем
+      alpha: 0,
+      ease: 'power2.in'
+    });
+  }
+
   // Метод для смены value извне (например, если пришло с сервера)
   setValue(newVal) {
     if (newVal === this._value) return;
+
+    const oldLetters = this.typedLetters.slice();  // копия массива
+    const oldLen = this._value.length;
+  
     // Ограничим по maxLetters
     if (newVal.length > this.maxLetters) {
       newVal = newVal.slice(0, this.maxLetters);
     }
+
+    const count = newVal.length;
+    const ratio = count / this.maxLetters; // 0..1
+
+    const maxSize = 115;
+    const minSize = 80;  // можно менять как хочется
+    const newFontSize = maxSize - (maxSize - minSize) * ratio;
+    this.letterStyle.fontSize = newFontSize;
+
+    const maxSpacing = 45;
+    const minSpacing = 35;
+    this.letterSpacing = maxSpacing - (maxSpacing - minSpacing) * ratio;
+    this._offsetScale = 1 - (0.5 * ratio); 
+
     this._value = newVal;
     // Перестраиваем буквы
     this._rebuildLetters();
     this._updateArcPositions();
+
+    if (count > oldLen) {
+      this._animateNewLetters();
+    }
+
+    if (count < oldLen) {
+      this._animateLetterFalling(oldLetters);
+    }
+
     // Вызываем onValue
     this.onValue(this._value);
   }
 
   setUserInput(enabled) {
     this.userInput = enabled;
+  }
+
+  _animateNewLetters() {
+    // Перебираем индексы новых букв
+    const letterObj = this.typedLetters[this.typedLetters.length - 1];
+    if (!letterObj) return;
+    const arcC = letterObj.arcContainer;
+  
+    // Анимируем «появление» (scale: 0 -> 1, alpha: 0 -> 1)
+    const tl = gsap.timeline();
+    tl.set(arcC, {
+      rotation: -.1,
+      y: -20,
+      height: 50,
+    });
+    tl.to(arcC, {
+      y: 0,
+      rotation: 0,
+      duration: .4,
+      height: arcC.height,
+      ease: 'back.out(3, .1)',
+    });
   }
 
   _rebuildLetters() {
@@ -133,11 +225,44 @@ export class ArcWordInput {
 
       this.typedLetters.push(letterObject);
 
-      this.doFearTremble(letterObject)
+      this.doFearTremble(letterObject);
     }
   }
 
-  _correctWord() {
+  _animateRemovedLetters(removedArray) {
+    removedArray.forEach((letterObj, i) => {
+      const arcC = letterObj.arcContainer;
+      if (!arcC) return;
+  
+      // Случайный угол и «дальность» падения
+      // Пусть падают вниз с разбросом ±45° по X
+      const angle = (Math.PI / 2) + (Math.random() - 0.5) * (Math.PI / 2);
+      const distance = 60 + Math.random() * 50;
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance;
+  
+      // Случайная длительность
+      const duration = 0.4 + Math.random() * 0.3;
+  
+      gsap.killTweensOf(arcC);
+  
+      // "Падение" + исчезновение
+      gsap.to(arcC, {
+        duration,
+        x: arcC.x + dx,
+        y: arcC.y + dy,
+        alpha: 0,
+        rotation: Math.random() * 2 * Math.PI,
+        ease: 'power2.in',
+        onComplete: () => {
+          // Убираем этот контейнер из Pixi
+          this.rootContainer.removeChild(arcC);
+        }
+      });
+    });
+  }
+
+  correctWord() {
     this._isAnimated = true;
     const durationCollapse = 0.2;
   
@@ -168,7 +293,7 @@ export class ArcWordInput {
     });
   }
 
-  _wrongWord() {
+  wrongWord() {
     this._isAnimated = true;
     const durationCollapse = 0.2;
   
@@ -206,17 +331,21 @@ export class ArcWordInput {
       this.onComplete(this._value, (wordExists) => {
         console.log(wordExists);
         if (wordExists) {
-          this._correctWord();
+          this.correctWord();
         } else {
-          this._wrongWord();
+          this.wrongWord();
         }
       });
       return;
     }
     if (e.key === 'Backspace') {
-      if (this._value.length>0) {
-        this.value = this._value.slice(0, -1); 
-        // setter value => rebuild => onValue
+      // if (this._isAnimated) return;
+      // if (this._value.length>0) {
+      //   this.value = this._value.slice(0, -1); 
+      //   // setter value => rebuild => onValue
+      // }
+      if (this._value.length > 0) {
+        this.value = this._value.slice(0, -1);
       }
       return;
     }
@@ -239,9 +368,8 @@ export class ArcWordInput {
     const count = this.typedLetters.length;
     for (let i=0; i<count; i++) {
       const ch = this.typedLetters[i].char;
-      const w = (this.charOffsets[ch] !== undefined)
-                ? this.charOffsets[ch]
-                : this.charOffsets.default;
+      const baseOffset = (this.charOffsets[ch] !== undefined) ? this.charOffsets[ch] : this.charOffsets.default;
+      const w = baseOffset * (this._offsetScale || 1);
       total += w;
     }
     if (count>0) {
@@ -267,15 +395,15 @@ export class ArcWordInput {
       const obj = this.typedLetters[i];
       const arcC = obj.arcContainer;
       const ch = obj.char.toUpperCase();
-      const w = (this.charOffsets[ch] !== undefined)
-                ? this.charOffsets[ch]
-                : this.charOffsets.default;
-
+      const baseOffset = (this.charOffsets[ch] !== undefined)
+      ? this.charOffsets[ch]
+      : this.charOffsets.default;
+      const scaledOffset = baseOffset * (this._offsetScale || 1);
       // Горизонтальное положение = currentX
       arcC.x = currentX;
 
       // следующее место
-      currentX += w + this.letterSpacing;
+      currentX += scaledOffset + this.letterSpacing;
 
       // Вертикальная «арка» как прежде: dist = i-mid
       if (count===1) {
@@ -293,63 +421,24 @@ export class ArcWordInput {
 
   doFearTremble(letterObj) {
     const sprite = letterObj.letterSprite;
-
-    // amplitude: baseAmplitude + amplitudeFactor*count
+  
+    // Определим «амплитуду» для этой буквы
     const count = this.typedLetters.length;
     const amplitude = this.baseAmplitude + this.amplitudeFactor * count;
-
-    // random dx,dy
-    const dx = (Math.random()-0.5)*2*amplitude;
-    const dy = (Math.random()-0.5)*2*amplitude;
-
-    // random duration (быстрота)
-    const duration = 0.1 + Math.random()*0.02; // 0.2..0.5
-
-    gsap.killTweensOf(sprite); // убиваем на всякий случай
+  
+    // Создаём один-единственный tween
     gsap.to(sprite, {
-      duration,
-      x: dx,
-      y: dy,
-      ease: "sine.inOut",
-      onComplete: () => {
-        // Когда доходит, если буква всё ещё активна => следующий "прыжок"
-        this.doFearTremble(letterObj); 
-      }
+      duration: 0.12,
+      // x, y – функция, которая возвращает случайное смещение
+      x: () => (Math.random() - 0.5) * 2 * amplitude,
+      y: () => (Math.random() - 0.5) * 2 * amplitude,
+      repeat: -1,         // бесконечно
+      yoyo: true,
+      ease: 'sine.inOut',
+      repeatRefresh: true // при каждом повторе заново вызываются функции x() и y()
     });
   }
-
-  // _wrongWord() {
-  //   const count = this.typedLetters.length;
-  //   if (count===0) return;
-  //   this._isAnimated = true;
-    
-  //   const duration = .15;    // время падения
-  //   const delayBetween = 0.1; // задержка между буквами
-  //   // Будем делать случайный dx (горизонтальный), и dy "побольше" вниз
-  //   this.typedLetters.forEach((obj, i) => {
-  //     const arcC = obj.arcContainer;
-  //     gsap.killTweensOf(arcC);
-
-  //     // Случайный отскок
-  //     const dx = (Math.random()-0.5)*2 * 20;   // ±200 влево/вправо
-  //     const dy = 30;       // 300..600 вниз
-
-  //     gsap.to(arcC, {
-  //       delay: i*delayBetween,
-  //       duration,
-  //       x: arcC.x + dx,
-  //       y: arcC.y + dy,
-  //       alpha: 0,
-  //       onComplete: () => {
-  //         // Когда последняя буква закончила:
-  //         if (i===count-1) {
-  //           this.clear();
-  //           this._isAnimated = false;
-  //         }
-  //       }
-  //     });
-  //   });
-  // }
+  
 
   // Уничтожаем компонент
   destroy() {

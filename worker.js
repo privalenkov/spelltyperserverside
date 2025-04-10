@@ -909,16 +909,34 @@ io.on('connection', (socket) => {
     const lobby = lobbies[lobbyId];
     if (!lobby) return;
 
+    function broadcastSpawnError(message) {
+      // Собираем объект errors: { socketId_игрока: message или null }
+      // В вашем случае лобби.players — это Set, переберём:
+      const errors = {};
+      for (const playerId of lobby.players) {
+        // тем, кто вызвал ошибку — пишем текст,
+        // остальным — null
+        if (playerId === socket.id) {
+          errors[playerId] = message;
+        } else {
+          errors[playerId] = null;
+        }
+      }
+      
+      // Шлём всем в лобби
+      io.to(lobbyId).emit('spawnError', { errors });
+    }
+
     if (lobby.currentPreview[socket.id]) {
       // Значит у игрока уже есть предмет, который не брошен => запрет
-      socket.emit('spawnError', { message: 'Вы уже спавните предмет, бросьте сначала!' });
+      broadcastSpawnError('Вы уже спавните предмет, бросьте сначала!');
       cb(false);
       return;
     }
 
     const found = mockDatabase.words.find(w => w.word === typedWord);
     if (!found) {
-      socket.emit('spawnError', { message: 'Слово не найдено' });
+      broadcastSpawnError('Слово не найдено');
       cb(false);
       return;
     }
@@ -927,7 +945,7 @@ io.on('connection', (socket) => {
     // Проходим itemDataMap, ищем item где item.ownerId === socket.id и item.guid === found.guid
     for (const [id, itemData] of lobby.itemDataMap.entries()) {
       if (itemData.ownerId === socket.id && itemData.guid === found.guid) {
-        socket.emit('spawnError', { message: 'Объект уже есть в котле' });
+        broadcastSpawnError('Объект уже есть в котле');
         cb(false);
         return;
       };
@@ -981,6 +999,20 @@ io.on('connection', (socket) => {
     });
 
     lobby.currentPreview[socket.id] = newId;
+
+
+    if (lobby.players.size === 2) {
+      const [playerA, playerB] = [...lobby.players]; 
+      const firstPlayerId = lobby.owner; 
+      const secondPlayerId = (playerA === firstPlayerId) ? playerB : playerA;
+      // Если предмет спавнит первый (владелец), то шлём событие второму
+      if (socket.id === firstPlayerId) {
+        io.to(secondPlayerId).emit('opponentSpawnedItem');
+      } else {
+        // Иначе, предмет спавнит второй — шлём событие первому (владельцу)
+        io.to(firstPlayerId).emit('opponentSpawnedItem');
+      }
+    }
   });
 
   // Движение предмета по X

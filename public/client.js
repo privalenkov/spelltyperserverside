@@ -9,6 +9,9 @@ const infoElem = document.getElementById('info');
 const inviteBox = document.getElementById('inviteBox');
 const spawnBtn = document.getElementById('spawnBtn');
 
+let lastMoveEmitTime = 0;    // таймстамп последней отправки 'moveItem'
+const EMIT_MOVE_INTERVAL = 30; // минимальный интервал (мс) между отправками
+
 // Лобби
 let currentLobbyId = null;
 let isLobbyOwner = false;
@@ -205,11 +208,14 @@ socket.on('playerLeaved', (msg) => {
   uiStatsEnemy = null;
 });
 
-socket.on('spawnError', ({ message }) => {
+socket.on('spawnError', ({ errors }) => {
+  const opponentId = Object.keys(errors).find(id => id !== socket.id);
+  if (errors[opponentId]) wordInputEnemy.wrongWord();
   wordInputPlayer.setUserInput(true);
 });
 
 socket.on('itemSpawned', async ({ itemId, word, rarityName, sprite, owner, playerCount }) => {
+  console.log('itemSpawned');
   currentPreviewItemId = itemId;
 
   mouseX = window.innerWidth / 2;
@@ -355,6 +361,11 @@ socket.on('scoreUpdated', ({ scoringPlayer, pointsGained, scores }) => {
   // Отрисуйте/обновите UI, например:
   // updateScoreUI(scores, scoringPlayer, pointsGained);
 });
+
+socket.on('opponentSpawnedItem', () => {
+  console.log('opponentSpawnedItem');
+  wordInputEnemy.correctWord();
+})
 
 socket.on('gameOver', (data) => {
   gameOverHappened = true;
@@ -548,11 +559,15 @@ function animatePreview() {
   localPreviewX += (mouseX - localPreviewX) * lerpFactor;
 
   if (currentPreviewItemId) {
-    socket.emit('moveItem', {
-      lobbyId: currentLobbyId,
-      itemId: currentPreviewItemId,
-      x: localPreviewX
-    });
+    const now = performance.now();
+    if (now - lastMoveEmitTime > EMIT_MOVE_INTERVAL) {
+      lastMoveEmitTime = now;
+      socket.emit('moveItem', {
+        lobbyId: currentLobbyId,
+        itemId: currentPreviewItemId,
+        x: localPreviewX
+      });
+    }
   }
 
   requestAnimationFrame(animatePreview);
